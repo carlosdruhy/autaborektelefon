@@ -15,13 +15,16 @@ if (isLoggedIn()) {
 $sent = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = trim($_POST['email'] ?? '');
-    $ip    = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $email     = trim($_POST['email'] ?? '');
+    $ip        = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $formToken = $_POST['csrf_token'] ?? '';
 
     // Vždy zobrazit stejnou zprávu (prevence user enumeration)
     $sent = true;
 
-    if (filter_var($email, FILTER_VALIDATE_EMAIL) && checkRateLimit('reset', $ip, $email)) {
+    if (!hash_equals((string)($_SESSION['csrf_login'] ?? ''), $formToken)) {
+        // Tiché odmítnutí — neunikají informace
+    } elseif (filter_var($email, FILTER_VALIDATE_EMAIL) && checkRateLimit('reset', $ip, $email)) {
         $stmt = getDB()->prepare('SELECT id, name, email FROM tel_users WHERE email = ? LIMIT 1');
         $stmt->execute([$email]);
         $user = $stmt->fetch();
@@ -85,6 +88,7 @@ if (empty($_SESSION['csrf_login'])) {
         <?php else: ?>
             <h2 class="h5 mb-3">Zapomenuté heslo</h2>
             <form method="post" novalidate>
+                <input type="hidden" name="csrf_token" value="<?= h($csrfLogin) ?>">
                 <div class="mb-3">
                     <label for="email" class="form-label">E-mail</label>
                     <input type="email" class="form-control" id="email" name="email"
