@@ -1,0 +1,19 @@
+# Závislosti
+/vendor/
+
+# Citlivá konfigurace
+/includes/config.php
+
+# Runtime soubory
+/logs/*.log
+/install.lock
+
+# PHPUnit cache
+.phpunit.result.cache
+
+# Paměť Claude Code
+/.claude/
+
+# Systémové soubory
+Thumbs.db
+.DS_Store

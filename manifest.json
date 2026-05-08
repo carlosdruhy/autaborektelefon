@@ -1,0 +1,19 @@
+{
+  "name": "Telefon – Auta Borek",
+  "short_name": "Telefon",
+  "description": "Správa telefonních požadavků Auta Borek a.s.",
+  "start_url": "/dashboard.php",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#3d3d3d",
+  "theme_color": "#3d3d3d",
+  "lang": "cs",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
