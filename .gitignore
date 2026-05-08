@@ -1,5 +1,5 @@
 # Závislosti
-/vendor/
+/_local/vendor/
 
 # Citlivá konfigurace
 /includes/config.php

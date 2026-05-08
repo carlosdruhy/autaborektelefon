@@ -16,9 +16,9 @@ define('LOG_FILE',       sys_get_temp_dir() . '/telefon_test.log');
 define('MAIL_FROM',      'test@example.com');
 define('MAIL_FROM_NAME', 'Test');
 
-require_once dirname(__DIR__) . '/includes/db.php';
-require_once dirname(__DIR__) . '/includes/functions.php';
-require_once dirname(__DIR__) . '/includes/auth.php';
+require_once dirname(__DIR__, 2) . '/includes/db.php';
+require_once dirname(__DIR__, 2) . '/includes/functions.php';
+require_once dirname(__DIR__, 2) . '/includes/auth.php';
 require_once __DIR__ . '/DatabaseTestCase.php';
 
 // Create all tables once at bootstrap time (IF NOT EXISTS — idempotent)
