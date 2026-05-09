@@ -16,22 +16,18 @@ $method = $_SERVER['REQUEST_METHOD'];
 switch ($action) {
     case 'list':
         handleList();
-        break;
     case 'create':
         if ($method !== 'POST') jsonErr('Metoda není povolena', 405);
         verifyCsrf();
         handleCreate();
-        break;
     case 'toggle_active':
         if ($method !== 'POST') jsonErr('Metoda není povolena', 405);
         verifyCsrf();
         handleToggleActive();
-        break;
     case 'toggle_reopen':
         if ($method !== 'POST') jsonErr('Metoda není povolena', 405);
         verifyCsrf();
         handleToggleReopen();
-        break;
     default:
         jsonErr('Neznámá akce', 400);
 }

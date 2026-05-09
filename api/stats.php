@@ -24,10 +24,8 @@ $toUtc   = (new DateTime($to . ' 23:59:59', new DateTimeZone('Europe/Prague')))
 switch ($view) {
     case 'by_technician':
         handleByTechnician($fromUtc, $toUtc);
-        break;
     case 'by_age':
         handleByAge($fromUtc, $toUtc);
-        break;
     default:
         jsonErr('Neznámý pohled. Použijte: by_technician, by_age');
 }

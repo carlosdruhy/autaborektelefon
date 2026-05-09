@@ -16,24 +16,20 @@ $method = $_SERVER['REQUEST_METHOD'];
 switch ($action) {
     case 'list':
         handleList();
-        break;
     case 'get':
         handleGet();
-        break;
     case 'create':
         if ($method !== 'POST') {
             jsonErr('Metoda není povolena', 405);
         }
         verifyCsrf();
         handleCreate();
-        break;
     case 'update':
         if ($method !== 'POST') {
             jsonErr('Metoda není povolena', 405);
         }
         verifyCsrf();
         handleUpdate();
-        break;
     default:
         jsonErr('Neznámá akce', 400);
 }
@@ -286,28 +282,20 @@ function handleUpdate(): never
     switch ($actionType) {
         case 'assign':
             handleAssign($db, $req, $userId, $now);
-            break;
         case 'takeover':
             handleTakeover($db, $req, $userId, $now, $body);
-            break;
         case 'set_pending':
             handleSetPending($db, $req, $userId, $now, $body);
-            break;
         case 'resume':
             handleResume($db, $req, $userId, $now);
-            break;
         case 'resolve':
             handleResolve($db, $req, $userId, $now, $body);
-            break;
         case 'reopen':
             handleReopen($db, $req, $userId, $now, $body);
-            break;
         case 'edit_field':
             handleEditField($db, $req, $userId, $now, $body);
-            break;
         case 'soft_delete':
             handleSoftDelete($db, $req, $userId, $now);
-            break;
         default:
             jsonErr('Neznámá action_type');
     }
