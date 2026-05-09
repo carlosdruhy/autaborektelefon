@@ -116,6 +116,7 @@ function handleConfirm(): never
     jsonOk(['updated' => count($results)]);
 }
 
+/** @param array<string, mixed> $body */
 function handleEnqueue(array $body): never
 {
     if (!getSetting('sms_enabled', '0')) {

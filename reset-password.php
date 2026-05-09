@@ -16,6 +16,7 @@ $token   = trim($_GET['token'] ?? '');
 $error   = '';
 $invalid = false;
 
+/** @return array<string, mixed>|false */
 function loadValidToken(string $token): array|false
 {
     if ($token === '') {

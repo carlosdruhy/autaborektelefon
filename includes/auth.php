@@ -83,6 +83,7 @@ function currentUserCanReopen(): bool
     return (bool)($_SESSION['user_can_reopen'] ?? true);
 }
 
+/** @param array<string, mixed> $user */
 function loginUser(array $user): void
 {
     session_regenerate_id(true);
@@ -153,6 +154,7 @@ function verifyCsrf(): void
     }
 }
 
+/** @param array<string, mixed> $user */
 function sendPasswordResetEmail(array $user, string $token): bool
 {
     $resetUrl = APP_URL . '/reset-password.php?token=' . urlencode($token);

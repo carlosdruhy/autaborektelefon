@@ -303,6 +303,7 @@ function handleUpdate(): never
 
 // ── assign ────────────────────────────────────────────────────────────────────
 
+/** @param array<string, mixed> $req */
 function handleAssign(PDO $db, array $req, int $userId, string $now): never
 {
     if (!in_array($req['status'], ['new', 'reopened'], true)) {
@@ -330,6 +331,10 @@ function handleAssign(PDO $db, array $req, int $userId, string $now): never
 
 // ── takeover ──────────────────────────────────────────────────────────────────
 
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
 function handleTakeover(PDO $db, array $req, int $userId, string $now, array $body): never
 {
     if ($req['status'] !== 'in_progress') {
@@ -364,6 +369,10 @@ function handleTakeover(PDO $db, array $req, int $userId, string $now, array $bo
 
 // ── set_pending ───────────────────────────────────────────────────────────────
 
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
 function handleSetPending(PDO $db, array $req, int $userId, string $now, array $body): never
 {
     if ($req['status'] !== 'in_progress') {
@@ -396,6 +405,7 @@ function handleSetPending(PDO $db, array $req, int $userId, string $now, array $
 
 // ── resume ────────────────────────────────────────────────────────────────────
 
+/** @param array<string, mixed> $req */
 function handleResume(PDO $db, array $req, int $userId, string $now): never
 {
     if ($req['status'] !== 'pending') {
@@ -422,6 +432,10 @@ function handleResume(PDO $db, array $req, int $userId, string $now): never
 
 // ── resolve ───────────────────────────────────────────────────────────────────
 
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
 function handleResolve(PDO $db, array $req, int $userId, string $now, array $body): never
 {
     if ($req['status'] !== 'in_progress') {
@@ -454,6 +468,10 @@ function handleResolve(PDO $db, array $req, int $userId, string $now, array $bod
 
 // ── reopen ────────────────────────────────────────────────────────────────────
 
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
 function handleReopen(PDO $db, array $req, int $userId, string $now, array $body): never
 {
     if ($req['status'] !== 'resolved') {
@@ -490,6 +508,10 @@ function handleReopen(PDO $db, array $req, int $userId, string $now, array $body
 
 // ── edit_field ────────────────────────────────────────────────────────────────
 
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
 function handleEditField(PDO $db, array $req, int $userId, string $now, array $body): never
 {
     $field = $body['field'] ?? '';
@@ -557,6 +579,7 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
 
 // ── soft_delete ───────────────────────────────────────────────────────────────
 
+/** @param array<string, mixed> $req */
 function handleSoftDelete(PDO $db, array $req, int $userId, string $now): never
 {
     if (!isAdmin()) {

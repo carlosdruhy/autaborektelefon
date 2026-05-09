@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 // ─── Settings ────────────────────────────────────────────────────────────────
 
+/** @return array<string, string> */
 function getSettings(): array
 {
     $stmt = getDB()->query('SELECT setting_key, setting_value FROM tel_settings');
@@ -37,6 +38,7 @@ function jsonOk(mixed $data = null): never
     exit;
 }
 
+/** @param array<string, mixed> $extra */
 function jsonErr(string $msg, int $code = 400, array $extra = []): never
 {
     http_response_code($code);
@@ -45,6 +47,7 @@ function jsonErr(string $msg, int $code = 400, array $extra = []): never
     exit;
 }
 
+/** @return array<string, mixed> */
 function getPostedJson(): array
 {
     $raw = file_get_contents('php://input');
