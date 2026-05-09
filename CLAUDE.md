@@ -85,7 +85,8 @@ All `api/*.php` files return JSON via `jsonOk($data)` / `jsonErr($msg, $code)`. 
 
 ### Database conventions
 - All timestamps stored as UTC (`nowUtc()` → `gmdate('Y-m-d H:i:s')`), displayed in `Europe/Prague` via `toLocalTime()`
-- Soft delete: `deleted_at IS NULL` filter on all queries; never physical DELETE
+- Soft delete: `deleted_at IS NULL` filter on all queries; never physical DELETE. Exception: `handleGet()` in `api/requests.php` omits this filter so admins can open deleted records in the modal
+- Admin filter `status=deleted` returns `deleted_at IS NOT NULL` records; `action_type=restore` reverses soft delete — both are admin-only
 - Audit trail: every state mutation is wrapped in a DB transaction and calls `logAudit()` to write to `tel_request_history`
 - Settings: key-value table `tel_settings`, accessed via `getSetting()` / `setSetting()` / `getSettings()`
 
@@ -102,8 +103,10 @@ Each transition is a POST to `api/requests.php?action=<action>` with `expected_u
 - `apiGet(path)` and `apiPost(path, body)` — path is relative to `APP.apiBase` (`/api`)
 - Cards are re-rendered on every poll via `loadRequests()` + `createRequestCard()`
 - Modal detail is loaded fresh on each open via `openRequestModal(id)` → `apiGet('/requests.php?action=get&id=...')`
-- User preferences (filter, sort, refresh interval, sound) persist in `localStorage`
+- User preferences persist in `localStorage` via `KEYS` constants: `AB_TEL_REFRESH`, `AB_TEL_SORT`, `AB_TEL_FILTER`, `AB_TEL_SOUND`, `AB_TEL_THEME`
 - Draft technician notes persist in `sessionStorage` keyed by request ID
+- Dark mode: Bootstrap 5.3 `data-bs-theme="dark"` on `<html>`, toggled by `initDarkMode()`, stored in `AB_TEL_THEME`. An inline `<script>` in `<head>` applies the theme before CSS loads (prevents flash)
+- Keyboard shortcuts: `N` = nový požadavek, `/` = hledání, `?` = nápověda — implemented in `initKeyboardShortcuts()`; ignored when focus is in INPUT/TEXTAREA/SELECT
 
 ### SMS subsystem
 - `api/sms.php` has two auth modes: session (enqueue + list) and API-key (bridge pull/confirm)
@@ -113,9 +116,13 @@ Each transition is a POST to `api/requests.php?action=<action>` with `expected_u
 ## Brand and UI constraints
 
 - Brand colours: antracit `#3d3d3d` (primary/navbar), azure `#00AEEF` (accent) — defined as CSS variables `--color-primary` and `--color-accent`
+- Font: Barlow (Google Fonts CDN) — loaded via `@import` in `style.css`
 - Bootstrap 5.3 CDN + Bootstrap Icons 1.11 CDN
-- CSP in `.htaccess` allows `'unsafe-inline'` for scripts and `data:` for fonts/images — do not add `eval` or external script origins without updating the CSP header
+- CSP in `.htaccess`: when adding any new external resource origin (fonts, scripts, styles), update the `Content-Security-Policy` header in `.htaccess` — Google Fonts requires `fonts.googleapis.com` in `style-src` and `fonts.gstatic.com` in `font-src`
 - All user-supplied strings rendered in HTML must go through `h()` (PHP) or `esc()` (JS)
+
+### Asset cache-busting
+All CSS/JS links use `assetUrl('assets/css/style.css')` (defined in `includes/functions.php`) which appends `?v=<filemtime>`. After FTP upload the timestamp changes → browser fetches fresh file automatically. Never use bare relative paths for CSS/JS assets.
 
 ## Database tables
 
@@ -130,9 +137,26 @@ Each transition is a POST to `api/requests.php?action=<action>` with `expected_u
 | `tel_vehicles` | Optional vehicle metadata keyed by normalised SPZ |
 | `tel_sms_queue` | Outbound SMS queue (`pending` / `sent` / `failed`) — created by `migrate-sms.sql` |
 
+## Typed helper functions (PHPStan level 9)
+
+All code is clean at PHPStan level 9. Use these helpers instead of direct array/PDO access on `mixed` types:
+
+| Function | Use for |
+|---|---|
+| `arrStr($arr, $key, $default)` | string from mixed array (superglobals, PDO rows) |
+| `arrInt($arr, $key, $default)` | int from mixed array |
+| `arrStrNull($arr, $key)` | `?string` — nullable DB fields |
+| `pdoFetch($stmt)` | `array<string,mixed>\|false` instead of `$stmt->fetch()` |
+| `pdoFetchAll($stmt)` | `list<array<string,mixed>>` instead of `$stmt->fetchAll()` |
+| `getSettingStr($key, $default)` | typed string from `tel_settings` |
+| `getSettingInt($key, $default)` | typed int from `tel_settings` |
+
+Never use `@var`, `assert()`, type casts on `mixed`, or `@phpstan-ignore`.
+
 ## Deployment notes
 
 - The `install.lock` file blocks re-running `install.php` — delete it only to reinstall
 - `migrate-sms.sql` must be run once in phpMyAdmin to add the SMS table and default settings
 - `sms-bridge.ps1` lives on the local Windows PC at the firm, not on the server
 - `logs/` and `includes/` directories are blocked by `.htaccess` and `admin/.htaccess`
+- `includes/config.php` is in `.gitignore` (contains DB credentials) — never commit it; maintain separately on server
