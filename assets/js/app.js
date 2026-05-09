@@ -485,6 +485,17 @@ function renderModalActions(req, draft) {
         footer.appendChild(btn);
     };
 
+    // Smazaný požadavek — jen obnovit, žádné jiné akce
+    if (req.deleted_at) {
+        if (isAdmin) {
+            addBtn('Obnovit požadavek', 'btn-outline-success ms-auto', () => {
+                if (!confirm('Obnovit tento požadavek?')) return;
+                submitAction('restore', {});
+            });
+        }
+        return;
+    }
+
     switch (req.status) {
         case 'new':
         case 'reopened':

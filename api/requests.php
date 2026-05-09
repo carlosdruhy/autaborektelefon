@@ -135,7 +135,7 @@ function handleGet(): never
          ) s ON s.request_id = r.id
          LEFT JOIN tel_users u1 ON r.created_by     = u1.id
          LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
-         WHERE r.id = ? AND r.deleted_at IS NULL
+         WHERE r.id = ?
          LIMIT 1'
     );
     $stmt->execute([$id]);
@@ -155,6 +155,10 @@ function handleGet(): never
     $assignedAt = arrStrNull($row, 'assigned_at');
     if ($assignedAt !== null) {
         $row['assigned_at_local'] = toLocalTime($assignedAt);
+    }
+    $deletedAt = arrStrNull($row, 'deleted_at');
+    if ($deletedAt !== null) {
+        $row['deleted_at_local'] = toLocalTime($deletedAt);
     }
 
     // Historie (posledních 20)
@@ -264,7 +268,12 @@ function handleUpdate(): never
 
     $db = getDB();
 
-    // Načti aktuální záznam
+    // Restore nepotřebuje deleted_at IS NULL — zpracuj ho zvlášť
+    if ($actionType === 'restore') {
+        handleRestore($db, $id, currentUserId(), nowUtc());
+    }
+
+    // Načti aktuální záznam (pouze nesmazané)
     $stmt = $db->prepare(
         'SELECT r.*, u2.name AS assigned_to_name
          FROM tel_requests r
@@ -308,6 +317,8 @@ function handleUpdate(): never
             handleEditField($db, $req, $userId, $now, $body);
         case 'soft_delete':
             handleSoftDelete($db, $req, $userId, $now);
+        case 'restore':
+            jsonErr('Neznámá action_type'); // restore se zpracovává před načtením $req
         default:
             jsonErr('Neznámá action_type');
     }
@@ -620,4 +631,34 @@ function handleSoftDelete(PDO $db, array $req, int $userId, string $now): never
     }
 
     jsonOk(['id' => $reqId]);
+}
+
+// ── restore ───────────────────────────────────────────────────────────────────
+
+function handleRestore(PDO $db, int $id, int $userId, string $now): never
+{
+    if (!isAdmin()) {
+        jsonErr('Nedostatečná oprávnění', 403);
+    }
+
+    $stmt = $db->prepare('SELECT id FROM tel_requests WHERE id = ? AND deleted_at IS NOT NULL LIMIT 1');
+    $stmt->execute([$id]);
+    if (!pdoFetch($stmt)) {
+        jsonErr('Smazaný požadavek nenalezen', 404);
+    }
+
+    $db->beginTransaction();
+    try {
+        $db->prepare(
+            'UPDATE tel_requests SET deleted_at = NULL, updated_at = ? WHERE id = ?'
+        )->execute([$now, $id]);
+        logAudit($db, $id, $userId, 'restored');
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        appLog('restore error: ' . $e->getMessage());
+        jsonErr('Chyba při ukládání', 500);
+    }
+
+    jsonOk(['id' => $id]);
 }
