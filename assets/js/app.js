@@ -378,6 +378,12 @@ function initKeyboardShortcuts() {
                 e.preventDefault();
                 document.getElementById('searchInput')?.focus();
                 break;
+            case '?':
+                e.preventDefault();
+                bootstrap.Modal.getOrCreateInstance(
+                    document.getElementById('shortcutsModal')
+                ).show();
+                break;
         }
     });
 }

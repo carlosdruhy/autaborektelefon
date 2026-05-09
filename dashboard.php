@@ -134,6 +134,11 @@ touchSession();
         <button id="notifBtn" class="btn btn-sm btn-outline-secondary" title="Klikněte pro zapnutí upozornění na nové požadavky">
             <i class="bi bi-bell" id="notifIcon"></i>
         </button>
+
+        <!-- Nápověda zkratek -->
+        <button class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#shortcutsModal" title="Klávesové zkratky (?)">
+            <i class="bi bi-keyboard"></i>
+        </button>
     </div>
 
     <!-- Počet výsledků -->
@@ -288,6 +293,40 @@ const APP = {
                 <button type="button" class="btn btn-primary" id="smsSendBtn">
                     <i class="bi bi-send"></i> Odeslat SMS
                 </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modální okno: Klávesové zkratky -->
+<div class="modal fade" id="shortcutsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-keyboard"></i> Klávesové zkratky</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <table class="table table-sm table-borderless mb-0">
+                    <tbody>
+                        <tr>
+                            <td class="ps-3"><kbd>N</kbd></td>
+                            <td class="text-muted">Nový požadavek</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3"><kbd>/</kbd></td>
+                            <td class="text-muted">Hledání</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3"><kbd>?</kbd></td>
+                            <td class="text-muted">Tato nápověda</td>
+                        </tr>
+                        <tr>
+                            <td class="ps-3"><kbd>Esc</kbd></td>
+                            <td class="text-muted">Zavřít okno</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
