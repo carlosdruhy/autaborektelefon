@@ -1,7 +1,9 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap');
+
 /* ── Proměnné ─────────────────────────────────────────────────── */
 :root {
-    --color-primary:   #3d3d3d;   /* antracit z loga */
-    --color-accent:    #00AEEF;   /* azurová z loga  */
+    --color-primary:   #3d3d3d;
+    --color-accent:    #00AEEF;
     --color-accent-dk: #0095cc;
     --color-amber:     #e8a000;
     --color-level-1:   #28a745;
@@ -9,11 +11,20 @@
     --color-level-3:   #fd7e14;
     --color-level-4:   #dc3545;
     --color-level-5:   #7b0000;
+    --shadow-sm:   0 1px 4px rgba(0,0,0,.08);
+    --shadow-md:   0 4px 16px rgba(0,0,0,.12);
+    --shadow-lg:   0 8px 28px rgba(0,0,0,.16);
+    --radius:      0.375rem;
 }
 
 /* ── Base ─────────────────────────────────────────────────────── */
 body {
+    font-family: 'Barlow', system-ui, sans-serif;
     font-size: 0.92rem;
+    background-color: #e8ecf1;
+    background-image: radial-gradient(circle, #c4cdd8 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-attachment: fixed;
 }
 
 /* ── Bootstrap overrides (primární barva = azurová) ──────────── */
@@ -24,6 +35,7 @@ body {
     --bs-btn-hover-border-color: var(--color-accent-dk);
     --bs-btn-active-bg:      #007faa;
     --bs-btn-active-border-color: #007faa;
+    font-weight: 600;
 }
 .btn-outline-primary {
     --bs-btn-color:          var(--color-accent);
@@ -34,9 +46,16 @@ body {
 a { color: var(--color-accent); }
 a:hover { color: var(--color-accent-dk); }
 
+:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
 /* ── Navbar ───────────────────────────────────────────────────── */
 .app-navbar {
-    background-color: var(--color-primary);
+    background: linear-gradient(160deg, #464646 0%, #333 100%);
+    border-bottom: 3px solid var(--color-accent);
+    box-shadow: 0 2px 14px rgba(0,0,0,.28);
 }
 
 .navbar-logo-wrap {
@@ -45,6 +64,7 @@ a:hover { color: var(--color-accent-dk); }
     padding: 3px 8px;
     display: flex;
     align-items: center;
+    box-shadow: 0 1px 4px rgba(0,0,0,.18);
 }
 
 .navbar-logo-wrap img {
@@ -53,20 +73,23 @@ a:hover { color: var(--color-accent-dk); }
 }
 
 .navbar-app-title {
-    font-size: 0.82rem;
-    color: rgba(255,255,255,.75);
-    line-height: 1.2;
+    font-size: 0.78rem;
+    font-weight: 500;
+    color: rgba(255,255,255,.65);
+    line-height: 1.25;
     max-width: 240px;
+    letter-spacing: .01em;
 }
 
 /* ── Login ────────────────────────────────────────────────────── */
 .login-card {
     background: #fff;
-    border-radius: 0.5rem;
-    box-shadow: 0 4px 24px rgba(0,0,0,.12);
-    padding: 2rem;
+    border-radius: 0.6rem;
+    box-shadow: var(--shadow-lg);
+    padding: 2rem 2.25rem;
     max-width: 420px;
     width: 100%;
+    border-top: 4px solid var(--color-accent);
 }
 
 .login-logo {
@@ -76,7 +99,8 @@ a:hover { color: var(--color-accent-dk); }
 
 /* ── Tabs ─────────────────────────────────────────────────────── */
 .nav-tabs .nav-link {
-    color: #555;
+    color: #666;
+    font-weight: 500;
 }
 .nav-tabs .nav-link.active {
     color: var(--color-accent);
@@ -86,50 +110,75 @@ a:hover { color: var(--color-accent-dk); }
 }
 
 /* ── Filtrovací tlačítka ─────────────────────────────────────── */
-/* Hover = světlý tón, aby se lišil od aktivního (plná šedá) */
 .filter-btn:not(.active) {
     --bs-btn-hover-bg:           #e2e6ea;
     --bs-btn-hover-color:        #495057;
     --bs-btn-hover-border-color: #adb5bd;
 }
+.filter-btn.active {
+    font-weight: 600;
+}
 
 /* ── Toolbar ──────────────────────────────────────────────────── */
 .req-toolbar {
-    background: #f8f9fa;
-    border: 1px solid #dee2e6;
-    border-radius: 0.375rem;
+    background: #fff;
+    border: 1px solid #d8dde3;
+    border-radius: var(--radius);
     padding: 0.5rem 0.75rem;
+    box-shadow: var(--shadow-sm);
 }
 
 /* ── Karta požadavku ──────────────────────────────────────────── */
 .req-card {
-    border: 1px solid #dee2e6;
-    border-left: 5px solid #dee2e6;
-    border-radius: 0.375rem;
+    border: 1px solid #d8dde3;
+    border-left: 5px solid #d8dde3;
+    border-radius: var(--radius);
     background: #fff;
     padding: 0.75rem 1rem;
     margin-bottom: 0.5rem;
     cursor: pointer;
-    transition: transform .15s, box-shadow .15s;
+    transition: transform .15s ease, box-shadow .15s ease;
     position: relative;
+    box-shadow: var(--shadow-sm);
 }
 .req-card:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0,0,0,.1);
+    box-shadow: var(--shadow-md);
+    border-color: #b8c0cc;
 }
 
-.req-card.level-1 { border-left-color: var(--color-level-1); }
-.req-card.level-2 { border-left-color: var(--color-level-2); }
-.req-card.level-3 { border-left-color: var(--color-level-3); }
-.req-card.level-4 { border-left-color: var(--color-level-4); }
+/* Urgency tints — jemný barevný nádech zleva */
+.req-card.level-1 {
+    border-left-color: var(--color-level-1);
+    background: linear-gradient(to right, rgba(40,167,69,.05) 0%, #fff 80px);
+}
+.req-card.level-2 {
+    border-left-color: var(--color-level-2);
+    background: linear-gradient(to right, rgba(255,193,7,.07) 0%, #fff 80px);
+}
+.req-card.level-3 {
+    border-left-color: var(--color-level-3);
+    background: linear-gradient(to right, rgba(253,126,20,.07) 0%, #fff 80px);
+}
+.req-card.level-4 {
+    border-left-color: var(--color-level-4);
+    background: linear-gradient(to right, rgba(220,53,69,.07) 0%, #fff 80px);
+    box-shadow: var(--shadow-sm), inset 5px 0 0 var(--color-level-4);
+}
 .req-card.level-5 {
     border-left-color: var(--color-level-5);
-    animation: pulse-border 1.5s ease-in-out infinite;
+    background: linear-gradient(to right, rgba(123,0,0,.09) 0%, #fff 80px);
+    box-shadow: var(--shadow-sm), 0 0 0 1px rgba(220,53,69,.2), inset 5px 0 0 var(--color-level-5);
+    animation: pulse-card 1.8s ease-in-out infinite;
 }
 
-@keyframes pulse-border {
-    0%, 100% { border-left-color: var(--color-level-5); }
-    50%       { border-left-color: #ff6b6b; }
+@keyframes pulse-card {
+    0%, 100% {
+        box-shadow: var(--shadow-sm), 0 0 0 1px rgba(220,53,69,.2), inset 5px 0 0 var(--color-level-5);
+    }
+    50% {
+        box-shadow: var(--shadow-sm), 0 0 0 2px rgba(220,53,69,.4), 0 0 12px rgba(220,53,69,.15), inset 5px 0 0 #ff2a2a;
+    }
 }
 
 /* Flash animace pro nové karty */
@@ -137,82 +186,88 @@ a:hover { color: var(--color-accent-dk); }
     animation: flash-new 5s ease-out forwards;
 }
 @keyframes flash-new {
-    0%   { background-color: #fff3cd; }
-    80%  { background-color: #fff3cd; }
+    0%   { background-color: #fff8d6; }
+    70%  { background-color: #fff8d6; }
     100% { background-color: #fff; }
 }
 
-/* ── Badges na kartě ─────────────────────────────────────────── */
+/* ── SPZ badge — automotive license plate feel ───────────────── */
 .badge-spz {
-    font-family: monospace;
+    font-family: 'Barlow Condensed', 'Courier New', monospace;
     font-size: 0.9rem;
-    background-color: var(--color-accent);
-    color: #fff;
-    padding: 0.2em 0.55em;
-    border-radius: 0.25rem;
+    background: #fffbf0;
+    color: #1a1510;
+    border: 1.5px solid #c8a840;
+    padding: 0.15em 0.65em;
+    border-radius: 3px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    box-shadow: 0 1px 3px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.8);
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/* ── Status badges ───────────────────────────────────────────── */
+.badge-age,
+.badge-technician,
+.badge-resolved,
+.badge-reopened,
+.badge-pending {
+    font-size: 0.72rem;
+    padding: 0.22em 0.6em;
+    border-radius: 2em;
     font-weight: 600;
-    letter-spacing: .04em;
+    letter-spacing: .01em;
+    white-space: nowrap;
 }
 
 .badge-age {
-    background-color: #6c757d;
+    background-color: #5a6472;
     color: #fff;
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
 }
 
 .badge-technician {
     background-color: #198754;
     color: #fff;
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
 }
 
 .badge-resolved {
     background-color: #198754;
     color: #fff;
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
+}
+
+.badge-reopened {
+    background-color: var(--color-amber);
+    color: #fff;
+}
+
+.badge-pending {
+    background-color: #0d6efd;
+    color: #fff;
 }
 
 .badge-sms {
     background: none;
     border: 1px solid var(--color-accent);
     color: var(--color-accent);
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
+    font-size: 0.72rem;
+    padding: 0.22em 0.6em;
+    border-radius: 2em;
+    font-weight: 600;
     cursor: pointer;
     line-height: 1;
+    transition: background .12s, color .12s;
+    white-space: nowrap;
 }
 .badge-sms:hover {
     background-color: var(--color-accent);
     color: #fff;
 }
 
-.badge-reopened {
-    background-color: #e8a000;
-    color: #fff;
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
-}
-
-.badge-pending {
-    background-color: #0d6efd;
-    color: #fff;
-    font-size: 0.75rem;
-    padding: 0.2em 0.5em;
-    border-radius: 0.25rem;
-}
-
 /* Ikony úrovní */
-.level-icon { font-size: 0.75rem; }
+.level-icon { font-size: 0.72rem; }
 .level-1 .level-icon { color: var(--color-level-1); }
-.level-2 .level-icon { color: var(--color-level-2); }
+.level-2 .level-icon { color: #c98a00; }
 .level-3 .level-icon { color: var(--color-level-3); }
 .level-4 .level-icon { color: var(--color-level-4); }
 .level-5 .level-icon { color: var(--color-level-5); }
@@ -221,32 +276,53 @@ a:hover { color: var(--color-accent-dk); }
 .modal-dialog { max-width: 700px; }
 
 .modal-header {
-    user-select: none; /* zabráníme označování textu při tažení */
+    user-select: none;
+    background: #f8f9fb;
+    border-bottom: 2px solid #eaecf0;
 }
 
 .modal-header::after {
     content: '⠿';
     font-size: 1rem;
-    color: rgba(0,0,0,.25);
+    color: rgba(0,0,0,.2);
     margin-left: auto;
     padding-right: 0.25rem;
     line-height: 1;
     pointer-events: none;
 }
 
+.modal-content {
+    box-shadow: var(--shadow-lg);
+    border: none;
+}
+
 .history-entry {
-    border-left: 3px solid #dee2e6;
+    border-left: 3px solid #d8dde3;
     padding-left: 0.75rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.6rem;
     font-size: 0.82rem;
+    transition: border-color .15s;
+}
+.history-entry:hover {
+    border-left-color: var(--color-accent);
 }
 
 /* ── Admin tabulky ───────────────────────────────────────────── */
 .admin-table th {
     background-color: #f1f3f5;
-    font-size: 0.82rem;
+    font-size: 0.8rem;
     text-transform: uppercase;
-    letter-spacing: .04em;
+    letter-spacing: .05em;
+    font-weight: 700;
+    color: #555;
+}
+.admin-table td {
+    vertical-align: middle;
+}
+
+/* ── Session warning banner ──────────────────────────────────── */
+#sessionWarning {
+    border-left: 4px solid #fd7e14;
 }
 
 /* ── Responsivita ────────────────────────────────────────────── */
@@ -255,4 +331,8 @@ a:hover { color: var(--color-accent-dk); }
     .req-toolbar { gap: 0.4rem; }
     .modal-dialog { margin: 0; max-width: 100%; }
     .modal-dialog .modal-content { border-radius: 0; min-height: 100vh; }
+    body {
+        background-image: none;
+        background-color: #edf0f4;
+    }
 }
