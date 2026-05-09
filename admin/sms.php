@@ -19,7 +19,7 @@ touchSession();
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#3d3d3d">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-<link rel="stylesheet" href="../assets/css/style.css">
+<link rel="stylesheet" href="<?= assetUrl('assets/css/style.css') ?>">
 </head>
 <body>
 <nav class="navbar navbar-dark navbar-expand-sm app-navbar px-3">

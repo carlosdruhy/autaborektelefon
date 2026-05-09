@@ -26,7 +26,7 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
 <meta name="apple-mobile-web-app-title" content="Telefon">
 <link rel="apple-touch-icon" href="/favicon.svg">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
-<link rel="stylesheet" href="../assets/css/style.css">
+<link rel="stylesheet" href="<?= assetUrl('assets/css/style.css') ?>">
 </head>
 <body>
 <nav class="navbar navbar-dark navbar-expand-sm app-navbar px-3">
@@ -119,7 +119,7 @@ const FROM_DATE = '<?= h($from) ?>';
 const TO_DATE   = '<?= h($to) ?>';
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="../assets/js/admin.js"></script>
+<script src="<?= assetUrl('assets/js/admin.js') ?>"></script>
 <script>initStatsPage();</script>
 </body>
 </html>

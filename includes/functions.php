@@ -336,6 +336,13 @@ function arrStrNull(array $arr, int|string $key): ?string
     return is_string($v) ? $v : null;
 }
 
+function assetUrl(string $path): string
+{
+    $file = __DIR__ . '/../' . ltrim($path, '/');
+    $v    = @filemtime($file) ?: 0;
+    return '/' . ltrim($path, '/') . '?v=' . $v;
+}
+
 function getSettingStr(string $key, string $default = ''): string
 {
     $v = getSetting($key, $default);
