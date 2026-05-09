@@ -16,13 +16,13 @@ $error   = '';
 $timeout = isset($_GET['timeout']);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = trim($_POST['email'] ?? '');
-    $pass  = $_POST['password'] ?? '';
-    $ip    = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+    $email = trim(arrStr($_POST, 'email'));
+    $pass  = arrStr($_POST, 'password');
+    $ip    = arrStr($_SERVER, 'REMOTE_ADDR', '0.0.0.0');
 
     // CSRF pro HTML formulář — token z hidden pole
-    $formToken   = $_POST['csrf_token'] ?? '';
-    $sessionToken = $_SESSION['csrf_login'] ?? '';
+    $formToken    = arrStr($_POST, 'csrf_token');
+    $sessionToken = arrStr($_SESSION, 'csrf_login');
     if (!$sessionToken || !hash_equals($sessionToken, $formToken)) {
         $error = 'Neplatný požadavek. Zkuste znovu.';
     } elseif (!checkRateLimit('login', $ip, $email)) {
@@ -33,14 +33,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
              FROM tel_users WHERE email = ? LIMIT 1'
         );
         $stmt->execute([$email]);
-        $user = $stmt->fetch();
+        $user = pdoFetch($stmt);
 
         if (!$user || !(bool)$user['is_active']) {
             recordRateFail('login', $ip, $email);
             $error = 'Nesprávný e-mail nebo heslo.';
         } elseif ($user['password_hash'] === null) {
             $error = 'Účet zatím nemá heslo. Použijte <a href="forgot-password.php">Zapomenuté heslo</a>.';
-        } elseif (!password_verify($pass, $user['password_hash'])) {
+        } elseif (!password_verify($pass, arrStr($user, 'password_hash'))) {
             recordRateFail('login', $ip, $email);
             $error = 'Nesprávný e-mail nebo heslo.';
         } else {
@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 if (empty($_SESSION['csrf_login'])) {
     $_SESSION['csrf_login'] = generateToken();
 }
-$csrfLogin = $_SESSION['csrf_login'];
+$csrfLogin = arrStr($_SESSION, 'csrf_login');
 ?><!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -95,7 +95,7 @@ $csrfLogin = $_SESSION['csrf_login'];
             <div class="mb-3">
                 <label for="email" class="form-label">E-mail</label>
                 <input type="email" class="form-control" id="email" name="email"
-                       value="<?= h($_POST['email'] ?? '') ?>"
+                       value="<?= h(arrStr($_POST, 'email')) ?>"
                        autocomplete="email" required autofocus>
             </div>
             <div class="mb-3">

@@ -38,10 +38,10 @@ $step    = 'form'; // 'form' | 'done'
 
 // ─── Zpracování formuláře ─────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $adminName  = trim($_POST['admin_name']  ?? '');
-    $adminEmail = trim($_POST['admin_email'] ?? '');
-    $adminPass  = $_POST['admin_pass']       ?? '';
-    $adminPass2 = $_POST['admin_pass2']      ?? '';
+    $adminName  = trim(arrStr($_POST, 'admin_name'));
+    $adminEmail = trim(arrStr($_POST, 'admin_email'));
+    $adminPass  = arrStr($_POST, 'admin_pass');
+    $adminPass2 = arrStr($_POST, 'admin_pass2');
 
     $formErrors = [];
     if ($adminName === '') {
@@ -242,13 +242,13 @@ function createAdminUser(PDO $db, string $name, string $email, string $password)
                 <div class="mb-3">
                     <label for="admin_name" class="form-label">Jméno</label>
                     <input type="text" class="form-control" id="admin_name" name="admin_name"
-                           value="<?= htmlspecialchars($_POST['admin_name'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+                           value="<?= htmlspecialchars(arrStr($_POST, 'admin_name'), ENT_QUOTES, 'UTF-8') ?>"
                            required>
                 </div>
                 <div class="mb-3">
                     <label for="admin_email" class="form-label">E-mail</label>
                     <input type="email" class="form-control" id="admin_email" name="admin_email"
-                           value="<?= htmlspecialchars($_POST['admin_email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
+                           value="<?= htmlspecialchars(arrStr($_POST, 'admin_email'), ENT_QUOTES, 'UTF-8') ?>"
                            required>
                 </div>
                 <div class="mb-3">

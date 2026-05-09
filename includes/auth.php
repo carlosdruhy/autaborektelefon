@@ -8,7 +8,7 @@ function startSecureSession(): void
     }
 
     $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (int)($_SERVER['SERVER_PORT'] ?? 80) === 443;
+        || arrInt($_SERVER, 'SERVER_PORT', 80) === 443;
 
     session_set_cookie_params([
         'lifetime' => 0,
@@ -58,24 +58,24 @@ function requireAdmin(): void
 
 function _isApiRequest(): bool
 {
-    return (str_contains($_SERVER['REQUEST_URI'] ?? '', '/api/'))
-        || str_starts_with($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')
+    return (str_contains(arrStr($_SERVER, 'REQUEST_URI'), '/api/'))
+        || str_starts_with(arrStr($_SERVER, 'HTTP_ACCEPT'), 'application/json')
         || !empty($_SERVER['HTTP_X_CSRF_TOKEN']);
 }
 
 function currentUserId(): int
 {
-    return (int)($_SESSION['user_id'] ?? 0);
+    return arrInt($_SESSION, 'user_id');
 }
 
 function currentUserName(): string
 {
-    return (string)($_SESSION['user_name'] ?? '');
+    return arrStr($_SESSION, 'user_name');
 }
 
 function currentUserRole(): string
 {
-    return (string)($_SESSION['user_role'] ?? '');
+    return arrStr($_SESSION, 'user_role');
 }
 
 function currentUserCanReopen(): bool
@@ -88,9 +88,9 @@ function loginUser(array $user): void
 {
     session_regenerate_id(true);
 
-    $_SESSION['user_id']         = (int)$user['id'];
-    $_SESSION['user_name']       = $user['name'];
-    $_SESSION['user_role']       = $user['role'];
+    $_SESSION['user_id']         = arrInt($user, 'id');
+    $_SESSION['user_name']       = arrStr($user, 'name');
+    $_SESSION['user_role']       = arrStr($user, 'role');
     $_SESSION['user_can_reopen'] = isset($user['can_reopen']) ? (bool)$user['can_reopen'] : true;
     $_SESSION['csrf_token']      = generateToken();
     $_SESSION['last_activity']   = time();
@@ -105,8 +105,8 @@ function checkSessionTimeout(): void
         return;
     }
 
-    $timeout = (int)getSetting('session_timeout', 500);
-    $last    = (int)($_SESSION['last_activity'] ?? 0);
+    $timeout = getSettingInt('session_timeout', 500);
+    $last    = arrInt($_SESSION, 'last_activity');
 
     if (time() - $last > $timeout * 60) {
         destroySession();
@@ -149,8 +149,8 @@ function generateToken(int $bytes = 32): string
 
 function verifyCsrf(): void
 {
-    $token = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-    if (!hash_equals((string)($_SESSION['csrf_token'] ?? ''), $token)) {
+    $token = arrStr($_SERVER, 'HTTP_X_CSRF_TOKEN');
+    if (!hash_equals(arrStr($_SESSION, 'csrf_token'), $token)) {
         jsonErr('Neplatný CSRF token', 403);
     }
 }
@@ -159,10 +159,10 @@ function verifyCsrf(): void
 function sendPasswordResetEmail(array $user, string $token): bool
 {
     $resetUrl = APP_URL . '/reset-password.php?token=' . urlencode($token);
-    $to       = $user['email'];
+    $to       = arrStr($user, 'email');
     $subject  = '=?UTF-8?B?' . base64_encode(APP_NAME . ' – nastavení hesla') . '?=';
 
-    $body = "Dobrý den, " . $user['name'] . ",\r\n\r\n"
+    $body = "Dobrý den, " . arrStr($user, 'name') . ",\r\n\r\n"
           . "Pro nastavení hesla klikněte na odkaz níže (platí 24 hodin):\r\n\r\n"
           . $resetUrl . "\r\n\r\n"
           . "Pokud jste tento e-mail neočekávali, ignorujte ho.\r\n\r\n"

@@ -15,7 +15,7 @@ touchSession();
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= h(APP_NAME) ?></title>
-<meta name="csrf-token" content="<?= h($_SESSION['csrf_token']) ?>">
+<meta name="csrf-token" content="<?= h(arrStr($_SESSION, 'csrf_token')) ?>">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="manifest" href="/manifest.json">
 <meta name="theme-color" content="#3d3d3d">
@@ -212,14 +212,14 @@ touchSession();
 const APP = {
     apiBase:         '<?= APP_URL ?>/api',
     appName:         '<?= h(APP_NAME) ?>',
-    csrfToken:       '<?= h($_SESSION['csrf_token']) ?>',
-    refreshInterval: <?= (int)getSetting('refresh_interval', 30) ?>,
-    sessionTimeout:  <?= (int)getSetting('session_timeout', 500) ?>,
+    csrfToken:       '<?= h(arrStr($_SESSION, 'csrf_token')) ?>',
+    refreshInterval: <?= getSettingInt('refresh_interval', 30) ?>,
+    sessionTimeout:  <?= getSettingInt('session_timeout', 500) ?>,
     colorThresholds: <?= json_encode([
-        (int)getSetting('color_level_1', 15),
-        (int)getSetting('color_level_2', 30),
-        (int)getSetting('color_level_3', 60),
-        (int)getSetting('color_level_4', 120),
+        getSettingInt('color_level_1', 15),
+        getSettingInt('color_level_2', 30),
+        getSettingInt('color_level_3', 60),
+        getSettingInt('color_level_4', 120),
     ]) ?>,
     currentUser: {
         id:        <?= currentUserId() ?>,

@@ -10,8 +10,8 @@ requireAdmin();
 checkSessionTimeout();
 touchSession();
 
-$from = $_GET['from'] ?? date('Y-m-01');
-$to   = $_GET['to']   ?? date('Y-m-d');
+$from = arrStr($_GET, 'from', date('Y-m-01'));
+$to   = arrStr($_GET, 'to', date('Y-m-d'));
 ?><!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -113,7 +113,7 @@ $to   = $_GET['to']   ?? date('Y-m-d');
 </div>
 
 <script>
-const CSRF     = '<?= h($_SESSION['csrf_token']) ?>';
+const CSRF     = '<?= h(arrStr($_SESSION, 'csrf_token')) ?>';
 const STATS_API = '<?= APP_URL ?>/api/stats.php';
 const FROM_DATE = '<?= h($from) ?>';
 const TO_DATE   = '<?= h($to) ?>';

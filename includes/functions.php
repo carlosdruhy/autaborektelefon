@@ -19,7 +19,7 @@ function getSetting(string $key, mixed $default = null): mixed
 {
     $stmt = getDB()->prepare('SELECT setting_value FROM tel_settings WHERE setting_key = ?');
     $stmt->execute([$key]);
-    $row = $stmt->fetch();
+    $row = pdoFetch($stmt);
     return $row !== false ? $row['setting_value'] : $default;
 }
 
@@ -146,13 +146,14 @@ function checkRateLimit(string $action, string $ip, string $email = ''): bool
          ORDER BY id DESC LIMIT 1'
     );
     $stmt->execute([$action, $ip, $email, $email]);
-    $row = $stmt->fetch();
+    $row = pdoFetch($stmt);
 
     if (!$row) {
         return true; // Žádný záznam = povoleno
     }
 
-    if ($row['locked_until'] !== null && $row['locked_until'] > $now) {
+    $lockedUntil = arrStrNull($row, 'locked_until');
+    if ($lockedUntil !== null && $lockedUntil > $now) {
         return false; // Stále zamknuto
     }
 
@@ -171,7 +172,7 @@ function recordRateFail(string $action, string $ip, string $email = ''): void
          ORDER BY id DESC LIMIT 1'
     );
     $stmt->execute([$action, $ip, $email, $email]);
-    $row = $stmt->fetch();
+    $row = pdoFetch($stmt);
 
     // Limity dle akce
     $limits = [
@@ -190,7 +191,7 @@ function recordRateFail(string $action, string $ip, string $email = ''): void
         return;
     }
 
-    $attempts  = (int) $row['attempts'] + 1;
+    $attempts  = arrInt($row, 'attempts') + 1;
     $lockedUntil = null;
 
     if ($attempts >= $cfg['max']) {
@@ -200,13 +201,14 @@ function recordRateFail(string $action, string $ip, string $email = ''): void
         $lockedUntil = gmdate('Y-m-d H:i:s', time() + $lockoutMins * 60);
     }
 
-    if ($row['id']) {
+    $rowId = arrInt($row, 'id');
+    if ($rowId > 0) {
         $stmt = $db->prepare(
             'UPDATE tel_rate_limits
              SET attempts = ?, locked_until = ?, last_attempt = ?
              WHERE id = ?'
         );
-        $stmt->execute([$attempts, $lockedUntil, $now, $row['id']]);
+        $stmt->execute([$attempts, $lockedUntil, $now, $rowId]);
     }
 }
 
@@ -274,4 +276,76 @@ function appLog(string $message): void
 {
     $line = sprintf("[%s] %s\n", date('Y-m-d H:i:s'), $message);
     @file_put_contents(LOG_FILE, $line, FILE_APPEND | LOCK_EX);
+}
+
+// ─── PDO helpers ─────────────────────────────────────────────────────────────
+
+/** @return array<string, mixed>|false */
+function pdoFetch(PDOStatement $stmt): array|false
+{
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!is_array($row)) return false;
+    $typed = [];
+    foreach ($row as $k => $v) {
+        if (is_string($k)) {
+            $typed[$k] = $v;
+        }
+    }
+    return $typed;
+}
+
+/** @return list<array<string, mixed>> */
+function pdoFetchAll(PDOStatement $stmt): array
+{
+    $result = [];
+    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        if (!is_array($row)) continue;
+        $typed = [];
+        foreach ($row as $k => $v) {
+            if (is_string($k)) {
+                $typed[$k] = $v;
+            }
+        }
+        $result[] = $typed;
+    }
+    return $result;
+}
+
+// ─── Typované přístupy ke smíšeným polím ─────────────────────────────────────
+
+/** @param array<int|string, mixed> $arr */
+function arrStr(array $arr, int|string $key, string $default = ''): string
+{
+    $v = $arr[$key] ?? null;
+    return is_string($v) ? $v : $default;
+}
+
+/** @param array<int|string, mixed> $arr */
+function arrInt(array $arr, int|string $key, int $default = 0): int
+{
+    $v = $arr[$key] ?? null;
+    if (is_int($v)) return $v;
+    if (is_numeric($v)) return (int)$v;
+    return $default;
+}
+
+/** @param array<int|string, mixed> $arr */
+function arrStrNull(array $arr, int|string $key): ?string
+{
+    $v = $arr[$key] ?? null;
+    return is_string($v) ? $v : null;
+}
+
+function getSettingStr(string $key, string $default = ''): string
+{
+    $v = getSetting($key, $default);
+    return is_string($v) ? $v : $default;
+}
+
+function getSettingInt(string $key, int $default = 0): int
+{
+    $v = getSetting($key, $default);
+    if (is_int($v)) return $v;
+    if (is_numeric($v)) return (int)$v;
+    return $default;
 }

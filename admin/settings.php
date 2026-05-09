@@ -19,7 +19,7 @@ $smsError = '';
 $anonSaved = false;
 $anonError = '';
 $anonCount = 0;
-$anonDays  = (int) ($_POST['anon_days'] ?? 730);
+$anonDays  = arrInt($_POST, 'anon_days', 730);
 if ($anonDays < 30 || $anonDays > 3650) {
     $anonDays = 730;
 }
@@ -34,10 +34,10 @@ $fields = [
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sms_settings') {
-    $smsIp      = trim($_POST['trb140_ip']      ?? '');
-    $smsUser    = trim($_POST['trb140_user']     ?? '');
-    $smsPass    = trim($_POST['trb140_pass']     ?? '');
-    $smsBKey    = trim($_POST['sms_bridge_key']  ?? '');
+    $smsIp      = trim(arrStr($_POST, 'trb140_ip'));
+    $smsUser    = trim(arrStr($_POST, 'trb140_user'));
+    $smsPass    = trim(arrStr($_POST, 'trb140_pass'));
+    $smsBKey    = trim(arrStr($_POST, 'sms_bridge_key'));
     $smsEnabled = ($_POST['sms_enabled'] ?? '0') === '1' ? '1' : '0';
 
     if ($smsEnabled === '1' && $smsIp === '') {
@@ -55,7 +55,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sms_s
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'anonymize') {
-    if ((int) ($_POST['anon_days'] ?? 0) < 30 || (int) ($_POST['anon_days'] ?? 0) > 3650) {
+    if (arrInt($_POST, 'anon_days') < 30 || arrInt($_POST, 'anon_days') > 3650) {
         $anonError = 'Počet dnů musí být mezi 30 a 3 650.';
     } else {
         try {
@@ -70,14 +70,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'anony
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'anonymize') {
     $postErrors = [];
     foreach ($fields as $key => $cfg) {
-        $val = (int)($_POST[$key] ?? 0);
+        $val = arrInt($_POST, $key);
         if ($val < $cfg['min'] || $val > $cfg['max']) {
             $postErrors[] = "{$cfg['label']}: hodnota musí být {$cfg['min']}–{$cfg['max']}.";
         }
     }
 
     // Validace pořadí prahů
-    $t = array_map(fn($k) => (int)($_POST[$k] ?? 0), ['color_level_1','color_level_2','color_level_3','color_level_4']);
+    $t = array_map(fn($k) => arrInt($_POST, $k), ['color_level_1','color_level_2','color_level_3','color_level_4']);
     if ($t[0] >= $t[1] || $t[1] >= $t[2] || $t[2] >= $t[3]) {
         $postErrors[] = 'Prahové hodnoty musí být v rostoucím pořadí.';
     }
@@ -86,7 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') !== 'anony
         $error = implode('<br>', array_map(fn($e) => h($e), $postErrors));
     } else {
         foreach ($fields as $key => $cfg) {
-            setSetting($key, (string)(int)$_POST[$key]);
+            setSetting($key, (string)arrInt($_POST, $key));
         }
         $saved = true;
     }
@@ -173,7 +173,7 @@ $anonPreviewCount = countAnonymizable($anonDays);
                     <div class="form-check form-switch">
                         <input class="form-check-input" type="checkbox" id="sms_enabled"
                                name="sms_enabled" value="1"
-                               <?= getSetting('sms_enabled', '0') === '1' ? 'checked' : '' ?>>
+                               <?= getSettingStr('sms_enabled') === '1' ? 'checked' : '' ?>>
                         <label class="form-check-label" for="sms_enabled">Povolit odesílání SMS</label>
                     </div>
                 </div>
@@ -181,7 +181,7 @@ $anonPreviewCount = countAnonymizable($anonDays);
                 <div class="mb-3">
                     <label class="form-label" for="trb140_ip">IP adresa TRB140 (v lokální síti)</label>
                     <input type="text" class="form-control" id="trb140_ip" name="trb140_ip"
-                           value="<?= h(getSetting('trb140_ip', '')) ?>"
+                           value="<?= h(getSettingStr('trb140_ip')) ?>"
                            placeholder="192.168.1.x">
                 </div>
 
@@ -189,13 +189,13 @@ $anonPreviewCount = countAnonymizable($anonDays);
                     <div class="col-6">
                         <label class="form-label" for="trb140_user">Uživatel TRB140</label>
                         <input type="text" class="form-control" id="trb140_user" name="trb140_user"
-                               value="<?= h(getSetting('trb140_user', 'admin')) ?>"
+                               value="<?= h(getSettingStr('trb140_user', 'admin')) ?>"
                                autocomplete="off">
                     </div>
                     <div class="col-6">
                         <label class="form-label" for="trb140_pass">Heslo TRB140</label>
                         <input type="password" class="form-control" id="trb140_pass" name="trb140_pass"
-                               value="<?= h(getSetting('trb140_pass', '')) ?>"
+                               value="<?= h(getSettingStr('trb140_pass')) ?>"
                                autocomplete="new-password">
                     </div>
                 </div>
@@ -205,7 +205,7 @@ $anonPreviewCount = countAnonymizable($anonDays);
                     <div class="input-group">
                         <input type="text" class="form-control font-monospace" id="sms_bridge_key"
                                name="sms_bridge_key"
-                               value="<?= h(getSetting('sms_bridge_key', '')) ?>"
+                               value="<?= h(getSettingStr('sms_bridge_key')) ?>"
                                autocomplete="off">
                         <button type="button" class="btn btn-outline-secondary" id="genKeyBtn">Generovat</button>
                     </div>

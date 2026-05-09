@@ -15,26 +15,26 @@ if (isLoggedIn()) {
 $sent = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email     = trim($_POST['email'] ?? '');
-    $ip        = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
-    $formToken = $_POST['csrf_token'] ?? '';
+    $email     = trim(arrStr($_POST, 'email'));
+    $ip        = arrStr($_SERVER, 'REMOTE_ADDR', '0.0.0.0');
+    $formToken = arrStr($_POST, 'csrf_token');
 
     // Vždy zobrazit stejnou zprávu (prevence user enumeration)
     $sent = true;
 
-    if (!hash_equals((string)($_SESSION['csrf_login'] ?? ''), $formToken)) {
+    if (!hash_equals(arrStr($_SESSION, 'csrf_login'), $formToken)) {
         // Tiché odmítnutí — neunikají informace
     } elseif (filter_var($email, FILTER_VALIDATE_EMAIL) && checkRateLimit('reset', $ip, $email)) {
         $stmt = getDB()->prepare('SELECT id, name, email FROM tel_users WHERE email = ? LIMIT 1');
         $stmt->execute([$email]);
-        $user = $stmt->fetch();
+        $user = pdoFetch($stmt);
 
         if ($user) {
             // Invaliduj staré tokeny
             $db = getDB();
             $db->prepare(
                 'UPDATE tel_password_resets SET used_at = ? WHERE user_id = ? AND used_at IS NULL'
-            )->execute([nowUtc(), $user['id']]);
+            )->execute([nowUtc(), arrInt($user, 'id')]);
 
             // Nový token
             $token     = generateToken(32);
@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare(
                 'INSERT INTO tel_password_resets (user_id, token, created_at, expires_at)
                  VALUES (?, ?, ?, ?)'
-            )->execute([$user['id'], $token, $now, $expiresAt]);
+            )->execute([arrInt($user, 'id'), $token, $now, $expiresAt]);
 
             sendPasswordResetEmail($user, $token);
         }
@@ -88,7 +88,7 @@ if (empty($_SESSION['csrf_login'])) {
         <?php else: ?>
             <h2 class="h5 mb-3">Zapomenuté heslo</h2>
             <form method="post" novalidate>
-                <input type="hidden" name="csrf_token" value="<?= h($_SESSION['csrf_login']) ?>">
+                <input type="hidden" name="csrf_token" value="<?= h(arrStr($_SESSION, 'csrf_login')) ?>">
                 <div class="mb-3">
                     <label for="email" class="form-label">E-mail</label>
                     <input type="email" class="form-control" id="email" name="email"

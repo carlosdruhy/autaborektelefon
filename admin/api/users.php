@@ -51,8 +51,8 @@ function handleList(): never
 function handleCreate(): never
 {
     $body  = getPostedJson();
-    $name  = trim($body['name']  ?? '');
-    $email = trim($body['email'] ?? '');
+    $name  = trim(arrStr($body, 'name'));
+    $email = trim(arrStr($body, 'email'));
     $role  = $body['role'] ?? 'user';
 
     if ($name === '') jsonErr('Jméno je povinné');
@@ -94,16 +94,16 @@ function handleCreate(): never
 function handleToggleReopen(): never
 {
     $body = getPostedJson();
-    $id   = (int)($body['id'] ?? 0);
+    $id   = arrInt($body, 'id');
     if ($id <= 0) jsonErr('Chybí ID');
 
     $db = getDB();
     $stmt = $db->prepare('SELECT can_reopen FROM tel_users WHERE id = ?');
     $stmt->execute([$id]);
-    $user = $stmt->fetch();
+    $user = pdoFetch($stmt);
     if (!$user) jsonErr('Uživatel nenalezen', 404);
 
-    $newState = $user['can_reopen'] ? 0 : 1;
+    $newState = arrInt($user, 'can_reopen') ? 0 : 1;
     $db->prepare('UPDATE tel_users SET can_reopen = ? WHERE id = ?')
        ->execute([$newState, $id]);
 
@@ -113,7 +113,7 @@ function handleToggleReopen(): never
 function handleToggleActive(): never
 {
     $body = getPostedJson();
-    $id   = (int)($body['id'] ?? 0);
+    $id   = arrInt($body, 'id');
 
     if ($id <= 0) jsonErr('Chybí ID');
     if ($id === currentUserId()) jsonErr('Nelze zablokovat sebe sama');
@@ -121,10 +121,10 @@ function handleToggleActive(): never
     $db = getDB();
     $stmt = $db->prepare('SELECT is_active FROM tel_users WHERE id = ?');
     $stmt->execute([$id]);
-    $user = $stmt->fetch();
+    $user = pdoFetch($stmt);
     if (!$user) jsonErr('Uživatel nenalezen', 404);
 
-    $newState = $user['is_active'] ? 0 : 1;
+    $newState = arrInt($user, 'is_active') ? 0 : 1;
     $db->prepare('UPDATE tel_users SET is_active = ? WHERE id = ?')
        ->execute([$newState, $id]);
 

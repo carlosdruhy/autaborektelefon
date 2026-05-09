@@ -11,9 +11,9 @@ checkSessionTimeout();
 touchSession();
 requireAdmin();
 
-$view = $_GET['view'] ?? '';
-$from = $_GET['from'] ?? date('Y-m-01');  // začátek aktuálního měsíce
-$to   = $_GET['to']   ?? date('Y-m-d');
+$view = arrStr($_GET, 'view');
+$from = arrStr($_GET, 'from', date('Y-m-01'));
+$to   = arrStr($_GET, 'to', date('Y-m-d'));
 
 // Převod na UTC rozsah (celý den v Prague čase → UTC)
 $fromUtc = (new DateTime($from . ' 00:00:00', new DateTimeZone('Europe/Prague')))

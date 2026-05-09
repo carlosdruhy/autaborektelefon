@@ -12,8 +12,8 @@ $action = $_GET['action'] ?? '';
 // ─── Bridge endpointy (autentizace API klíčem, bez session) ──────────────────
 
 if ($action === 'pending' || $action === 'confirm') {
-    $bridgeKey = getSetting('sms_bridge_key', '');
-    $reqKey    = $_GET['key'] ?? '';
+    $bridgeKey = getSettingStr('sms_bridge_key');
+    $reqKey    = arrStr($_GET, 'key');
     if ($bridgeKey === '' || !hash_equals($bridgeKey, $reqKey)) {
         jsonErr('Unauthorized', 401);
     }
@@ -46,7 +46,7 @@ jsonErr('Bad request');
 
 function handleSmsList(): never
 {
-    $requestId = isset($_GET['request_id']) ? (int) $_GET['request_id'] : null;
+    $requestId = isset($_GET['request_id']) ? arrInt($_GET, 'request_id') : null;
 
     if ($requestId !== null) {
         $stmt = getDB()->prepare(
@@ -95,25 +95,31 @@ function handlePending(): never
 
 function handleConfirm(): never
 {
-    $results = getPostedJson()['results'] ?? [];
-    $db      = getDB();
-    $update  = $db->prepare(
+    $body       = getPostedJson();
+    $rawResults = $body['results'] ?? null;
+    $db         = getDB();
+    $update     = $db->prepare(
         'UPDATE tel_sms_queue
          SET status = ?, sent_at = ?, error_msg = ?
          WHERE id = ?'
     );
-    foreach ($results as $r) {
-        $id      = (int) ($r['id'] ?? 0);
-        $success = (bool) ($r['success'] ?? false);
-        $errMsg  = $success ? null : substr((string) ($r['error'] ?? 'Neznámá chyba'), 0, 255);
-        $update->execute([
-            $success ? 'sent' : 'failed',
-            $success ? nowUtc() : null,
-            $errMsg,
-            $id,
-        ]);
+    $count = 0;
+    if (is_array($rawResults)) {
+        foreach ($rawResults as $r) {
+            if (!is_array($r)) continue;
+            $id      = arrInt($r, 'id');
+            $success = (bool) ($r['success'] ?? false);
+            $errMsg  = $success ? null : substr(arrStr($r, 'error', 'Neznámá chyba'), 0, 255);
+            $update->execute([
+                $success ? 'sent' : 'failed',
+                $success ? nowUtc() : null,
+                $errMsg,
+                $id,
+            ]);
+            $count++;
+        }
     }
-    jsonOk(['updated' => count($results)]);
+    jsonOk(['updated' => $count]);
 }
 
 /** @param array<string, mixed> $body */
@@ -122,9 +128,9 @@ function handleEnqueue(array $body): never
     if (!getSetting('sms_enabled', '0')) {
         jsonErr('SMS není povoleno', 503);
     }
-    $requestId = isset($body['request_id']) ? (int) $body['request_id'] : null;
-    $phone     = trim($body['phone']   ?? '');
-    $message   = trim($body['message'] ?? '');
+    $requestId = isset($body['request_id']) ? arrInt($body, 'request_id') : null;
+    $phone     = trim(arrStr($body, 'phone'));
+    $message   = trim(arrStr($body, 'message'));
 
     if ($phone === '' || $message === '') {
         jsonErr('Telefon a text zprávy jsou povinné');

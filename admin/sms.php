@@ -67,7 +67,7 @@ touchSession();
 </div>
 
 <script>
-const CSRF    = '<?= h($_SESSION['csrf_token']) ?>';
+const CSRF    = '<?= h(arrStr($_SESSION, 'csrf_token')) ?>';
 const SMS_API = '<?= APP_URL ?>/api/sms.php';
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>

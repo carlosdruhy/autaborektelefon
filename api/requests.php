@@ -42,7 +42,7 @@ function handleList(): never
 
     $statusFilter = $_GET['status'] ?? '';
     $sort         = ($_GET['sort'] ?? 'asc') === 'desc' ? 'DESC' : 'ASC';
-    $search       = trim($_GET['search'] ?? '');
+    $search       = trim(arrStr($_GET, 'search'));
 
     $where  = ['r.deleted_at IS NULL'];
     $params = [];
@@ -107,7 +107,7 @@ function handleList(): never
 
 function handleGet(): never
 {
-    $id = (int)($_GET['id'] ?? 0);
+    $id = arrInt($_GET, 'id');
     if ($id <= 0) {
         jsonErr('Chybí ID', 400);
     }
@@ -129,20 +129,22 @@ function handleGet(): never
          LIMIT 1'
     );
     $stmt->execute([$id]);
-    $row = $stmt->fetch();
+    $row = pdoFetch($stmt);
 
     if (!$row) {
         jsonErr('Požadavek nenalezen', 404);
     }
 
-    $row['age_minutes']      = ageMinutes($row['created_at']);
-    $row['created_at_local'] = toLocalTime($row['created_at']);
-    $row['updated_at_local'] = toLocalTime($row['updated_at']);
-    if ($row['resolved_at']) {
-        $row['resolved_at_local'] = toLocalTime($row['resolved_at']);
+    $row['age_minutes']      = ageMinutes(arrStr($row, 'created_at'));
+    $row['created_at_local'] = toLocalTime(arrStr($row, 'created_at'));
+    $row['updated_at_local'] = toLocalTime(arrStr($row, 'updated_at'));
+    $resolvedAt = arrStrNull($row, 'resolved_at');
+    if ($resolvedAt !== null) {
+        $row['resolved_at_local'] = toLocalTime($resolvedAt);
     }
-    if ($row['assigned_at']) {
-        $row['assigned_at_local'] = toLocalTime($row['assigned_at']);
+    $assignedAt = arrStrNull($row, 'assigned_at');
+    if ($assignedAt !== null) {
+        $row['assigned_at_local'] = toLocalTime($assignedAt);
     }
 
     // Historie (posledních 20)
@@ -155,9 +157,9 @@ function handleGet(): never
          LIMIT 20'
     );
     $hStmt->execute([$id]);
-    $history = $hStmt->fetchAll();
+    $history = pdoFetchAll($hStmt);
     foreach ($history as &$h) {
-        $h['created_at_local'] = toLocalTime($h['created_at']);
+        $h['created_at_local'] = toLocalTime(arrStr($h, 'created_at'));
     }
     unset($h);
 
@@ -172,11 +174,11 @@ function handleCreate(): never
 {
     $body = getPostedJson();
 
-    $spz         = trim($body['spz']          ?? '');
-    $clientName  = trim($body['client_name']   ?? '');
-    $clientPhone = trim($body['client_phone']  ?? '');
-    $clientEmail = trim($body['client_email']  ?? '');
-    $requestText = trim($body['request_text']  ?? '');
+    $spz         = trim(arrStr($body, 'spz'));
+    $clientName  = trim(arrStr($body, 'client_name'));
+    $clientPhone = trim(arrStr($body, 'client_phone'));
+    $clientEmail = trim(arrStr($body, 'client_email'));
+    $requestText = trim(arrStr($body, 'request_text'));
 
     if ($spz === '' || $clientName === '' || $requestText === '') {
         jsonErr('Povinná pole: spz, client_name, request_text');
@@ -224,10 +226,10 @@ function handleCreate(): never
              WHERE r.id = ?'
         );
         $row->execute([$newId]);
-        $req = $row->fetch();
+        $req = pdoFetch($row) ?: throw new \RuntimeException('Nový záznam nenalezen');
         $req['age_minutes']      = 0;
-        $req['created_at_local'] = toLocalTime($req['created_at']);
-        $req['updated_at_local'] = toLocalTime($req['updated_at']);
+        $req['created_at_local'] = toLocalTime(arrStr($req, 'created_at'));
+        $req['updated_at_local'] = toLocalTime(arrStr($req, 'updated_at'));
 
         jsonOk($req);
     } catch (Throwable $e) {
@@ -242,9 +244,9 @@ function handleCreate(): never
 function handleUpdate(): never
 {
     $body       = getPostedJson();
-    $id         = (int)($body['id'] ?? 0);
-    $expectedAt = trim($body['expected_updated_at'] ?? '');
-    $actionType = $body['action_type'] ?? '';
+    $id         = arrInt($body, 'id');
+    $expectedAt = trim(arrStr($body, 'expected_updated_at'));
+    $actionType = arrStr($body, 'action_type');
 
     if ($id <= 0) {
         jsonErr('Chybí ID');
@@ -260,7 +262,7 @@ function handleUpdate(): never
          WHERE r.id = ? AND r.deleted_at IS NULL LIMIT 1'
     );
     $stmt->execute([$id]);
-    $req = $stmt->fetch();
+    $req = pdoFetch($stmt);
 
     if (!$req) {
         jsonErr('Požadavek nenalezen', 404);
@@ -268,7 +270,7 @@ function handleUpdate(): never
 
     // Race condition check
     if ($expectedAt !== '' && $req['updated_at'] !== $expectedAt) {
-        $editor = $req['assigned_to_name'] ?? 'někdo jiný';
+        $editor = arrStr($req, 'assigned_to_name', 'někdo jiný');
         jsonErr(
             "Požadavek byl mezitím upraven uživatelem $editor. Klikněte pro obnovení dat.",
             409,
@@ -310,15 +312,16 @@ function handleAssign(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Nelze převzít v aktuálním stavu');
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
             'UPDATE tel_requests
              SET status = \'in_progress\', assigned_to_id = ?, assigned_at = ?, updated_at = ?
              WHERE id = ?'
-        )->execute([$userId, $now, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'status_change', 'status', $req['status'], 'in_progress');
-        logAudit($db, $req['id'], $userId, 'assigned', 'assigned_to_id', (string)($req['assigned_to_id'] ?? ''), (string)$userId);
+        )->execute([$userId, $now, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'status_change', 'status', arrStr($req, 'status'), 'in_progress');
+        logAudit($db, $reqId, $userId, 'assigned', 'assigned_to_id', arrStr($req, 'assigned_to_id'), (string)$userId);
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -326,7 +329,7 @@ function handleAssign(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── takeover ──────────────────────────────────────────────────────────────────
@@ -340,11 +343,12 @@ function handleTakeover(PDO $db, array $req, int $userId, string $now, array $bo
     if ($req['status'] !== 'in_progress') {
         jsonErr('Přebrání je možné jen pro stav in_progress');
     }
-    if ((int)($req['assigned_to_id'] ?? 0) === $userId) {
+    if (arrInt($req, 'assigned_to_id') === $userId) {
         jsonErr('Ticket je již váš');
     }
 
-    $reason = trim($body['takeover_reason'] ?? '');
+    $reason = trim(arrStr($body, 'takeover_reason'));
+    $reqId  = arrInt($req, 'id');
 
     $db->beginTransaction();
     try {
@@ -352,10 +356,10 @@ function handleTakeover(PDO $db, array $req, int $userId, string $now, array $bo
             'UPDATE tel_requests
              SET assigned_to_id = ?, assigned_at = ?, updated_at = ?
              WHERE id = ?'
-        )->execute([$userId, $now, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'takeover', 'assigned_to_id', (string)($req['assigned_to_id'] ?? ''), (string)$userId);
+        )->execute([$userId, $now, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'takeover', 'assigned_to_id', arrStr($req, 'assigned_to_id'), (string)$userId);
         if ($reason !== '') {
-            logAudit($db, $req['id'], $userId, 'field_edit', 'takeover_reason', null, $reason);
+            logAudit($db, $reqId, $userId, 'field_edit', 'takeover_reason', null, $reason);
         }
         $db->commit();
     } catch (Throwable $e) {
@@ -364,7 +368,7 @@ function handleTakeover(PDO $db, array $req, int $userId, string $now, array $bo
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── set_pending ───────────────────────────────────────────────────────────────
@@ -379,20 +383,21 @@ function handleSetPending(PDO $db, array $req, int $userId, string $now, array $
         jsonErr('Čekat lze pouze ze stavu in_progress');
     }
 
-    $reason = trim($body['pending_reason'] ?? '');
+    $reason = trim(arrStr($body, 'pending_reason'));
     if ($reason === '') {
         jsonErr('Důvod čekání je povinný');
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
             'UPDATE tel_requests
              SET status = \'pending\', pending_reason = ?, updated_at = ?
              WHERE id = ?'
-        )->execute([$reason, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'status_change', 'status', $req['status'], 'pending');
-        logAudit($db, $req['id'], $userId, 'field_edit', 'pending_reason', $req['pending_reason'], $reason);
+        )->execute([$reason, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'status_change', 'status', arrStr($req, 'status'), 'pending');
+        logAudit($db, $reqId, $userId, 'field_edit', 'pending_reason', arrStrNull($req, 'pending_reason'), $reason);
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -400,7 +405,7 @@ function handleSetPending(PDO $db, array $req, int $userId, string $now, array $
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── resume ────────────────────────────────────────────────────────────────────
@@ -412,14 +417,15 @@ function handleResume(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Pokračovat lze pouze ze stavu pending');
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
             'UPDATE tel_requests
              SET status = \'in_progress\', assigned_to_id = ?, assigned_at = ?, updated_at = ?
              WHERE id = ?'
-        )->execute([$userId, $now, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'status_change', 'status', 'pending', 'in_progress');
+        )->execute([$userId, $now, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'status_change', 'status', 'pending', 'in_progress');
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -427,7 +433,7 @@ function handleResume(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── resolve ───────────────────────────────────────────────────────────────────
@@ -442,20 +448,21 @@ function handleResolve(PDO $db, array $req, int $userId, string $now, array $bod
         jsonErr('Uzavřít lze pouze ze stavu in_progress');
     }
 
-    $note = trim($body['technician_note'] ?? '');
+    $note = trim(arrStr($body, 'technician_note'));
     if ($note === '') {
         jsonErr('Poznámka k řešení je povinná');
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
             'UPDATE tel_requests
              SET status = \'resolved\', technician_note = ?, resolved_at = ?, updated_at = ?
              WHERE id = ?'
-        )->execute([$note, $now, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'status_change', 'status', $req['status'], 'resolved');
-        logAudit($db, $req['id'], $userId, 'field_edit', 'technician_note', $req['technician_note'], $note);
+        )->execute([$note, $now, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'status_change', 'status', arrStr($req, 'status'), 'resolved');
+        logAudit($db, $reqId, $userId, 'field_edit', 'technician_note', arrStrNull($req, 'technician_note'), $note);
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -463,7 +470,7 @@ function handleResolve(PDO $db, array $req, int $userId, string $now, array $bod
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── reopen ────────────────────────────────────────────────────────────────────
@@ -481,11 +488,12 @@ function handleReopen(PDO $db, array $req, int $userId, string $now, array $body
         jsonErr('Nemáte oprávnění znovuotevřít uzavřený požadavek', 403);
     }
 
-    $reason = trim($body['reopen_reason'] ?? '');
+    $reason = trim(arrStr($body, 'reopen_reason'));
     if ($reason === '') {
         jsonErr('Důvod znovuotevření je povinný');
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
@@ -493,9 +501,9 @@ function handleReopen(PDO $db, array $req, int $userId, string $now, array $body
              SET status = \'reopened\', reopen_reason = ?, resolved_at = NULL,
                  assigned_to_id = NULL, assigned_at = NULL, updated_at = ?
              WHERE id = ?'
-        )->execute([$reason, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'reopened', 'status', 'resolved', 'reopened');
-        logAudit($db, $req['id'], $userId, 'field_edit', 'reopen_reason', null, $reason);
+        )->execute([$reason, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'reopened', 'status', 'resolved', 'reopened');
+        logAudit($db, $reqId, $userId, 'field_edit', 'reopen_reason', null, $reason);
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -503,7 +511,7 @@ function handleReopen(PDO $db, array $req, int $userId, string $now, array $body
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── edit_field ────────────────────────────────────────────────────────────────
@@ -514,8 +522,8 @@ function handleReopen(PDO $db, array $req, int $userId, string $now, array $body
  */
 function handleEditField(PDO $db, array $req, int $userId, string $now, array $body): never
 {
-    $field = $body['field'] ?? '';
-    $value = trim($body['value'] ?? '');
+    $field = arrStr($body, 'field');
+    $value = trim(arrStr($body, 'value'));
     $isAdmin = isAdmin();
 
     // Povolená pole dle role a stavu
@@ -537,7 +545,7 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
         }
         // technician_note a pending_reason jen přiřazený technik
         if (in_array($field, ['technician_note', 'pending_reason'], true)) {
-            if ((int)($req['assigned_to_id'] ?? 0) !== $userId) {
+            if (arrInt($req, 'assigned_to_id') !== $userId) {
                 jsonErr('Toto pole může editovat pouze přiřazený technik');
             }
         }
@@ -560,13 +568,14 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
     }
 
     $storeValue = $field === 'spz' ? normalizeSpz($value) : $value;
-    $oldValue   = (string)($req[$field] ?? '');
+    $oldValue   = arrStr($req, $field);
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare("UPDATE tel_requests SET `$field` = ?, updated_at = ? WHERE id = ?")
-           ->execute([$storeValue ?: null, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'field_edit', $field, $oldValue, $storeValue);
+           ->execute([$storeValue ?: null, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'field_edit', $field, $oldValue, $storeValue);
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -574,7 +583,7 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }
 
 // ── soft_delete ───────────────────────────────────────────────────────────────
@@ -586,12 +595,13 @@ function handleSoftDelete(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Nedostatečná oprávnění', 403);
     }
 
+    $reqId = arrInt($req, 'id');
     $db->beginTransaction();
     try {
         $db->prepare(
             'UPDATE tel_requests SET deleted_at = ?, updated_at = ? WHERE id = ?'
-        )->execute([$now, $now, $req['id']]);
-        logAudit($db, $req['id'], $userId, 'soft_deleted');
+        )->execute([$now, $now, $reqId]);
+        logAudit($db, $reqId, $userId, 'soft_deleted');
         $db->commit();
     } catch (Throwable $e) {
         $db->rollBack();
@@ -599,5 +609,5 @@ function handleSoftDelete(PDO $db, array $req, int $userId, string $now): never
         jsonErr('Chyba při ukládání', 500);
     }
 
-    jsonOk(['id' => $req['id']]);
+    jsonOk(['id' => $reqId]);
 }

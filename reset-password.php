@@ -12,7 +12,7 @@ if (isLoggedIn()) {
     exit;
 }
 
-$token   = trim($_GET['token'] ?? '');
+$token   = trim(arrStr($_GET, 'token'));
 $error   = '';
 $invalid = false;
 
@@ -30,7 +30,7 @@ function loadValidToken(string $token): array|false
          LIMIT 1'
     );
     $stmt->execute([$token, nowUtc()]);
-    return $stmt->fetch() ?: false;
+    return pdoFetch($stmt);
 }
 
 $tokenRow = loadValidToken($token);
@@ -39,9 +39,9 @@ if (!$tokenRow) {
 }
 
 if (!$invalid && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    $newPass  = $_POST['password']  ?? '';
-    $newPass2 = $_POST['password2'] ?? '';
-    $postToken = $_POST['token']    ?? '';
+    $newPass   = arrStr($_POST, 'password');
+    $newPass2  = arrStr($_POST, 'password2');
+    $postToken = arrStr($_POST, 'token');
 
     // Znovu ověř token (replay protection)
     $tokenRow = loadValidToken($postToken);
@@ -97,7 +97,7 @@ if (!$invalid && $_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
         <?php else: ?>
             <h2 class="h5 mb-1">Nastavení hesla</h2>
-            <p class="text-muted mb-3">Pro účet <strong><?= h($tokenRow['email']) ?></strong></p>
+            <p class="text-muted mb-3">Pro účet <strong><?= h(arrStr($tokenRow, 'email')) ?></strong></p>
 
             <?php if ($error): ?>
                 <div class="alert alert-danger"><?= h($error) ?></div>
