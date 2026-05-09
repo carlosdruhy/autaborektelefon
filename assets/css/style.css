@@ -85,6 +85,14 @@ a:hover { color: var(--color-accent-dk); }
     border-top: 2px solid var(--color-accent);
 }
 
+/* ── Filtrovací tlačítka ─────────────────────────────────────── */
+/* Hover = světlý tón, aby se lišil od aktivního (plná šedá) */
+.filter-btn:not(.active) {
+    --bs-btn-hover-bg:           #e2e6ea;
+    --bs-btn-hover-color:        #495057;
+    --bs-btn-hover-border-color: #adb5bd;
+}
+
 /* ── Toolbar ──────────────────────────────────────────────────── */
 .req-toolbar {
     background: #f8f9fa;
