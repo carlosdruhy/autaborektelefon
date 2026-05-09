@@ -36,7 +36,7 @@ if ($action === 'list') {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $body = getPostedJson();
-    verifyCsrf($body['csrf'] ?? '');
+    verifyCsrf();
     handleEnqueue($body);
 }
 

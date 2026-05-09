@@ -1,0 +1,14 @@
+parameters:
+    level: 3
+    phpVersion: 80300
+    paths:
+        - ../includes
+        - ../api
+        - ../admin
+        - ../dashboard.php
+        - ../login.php
+        - ../logout.php
+        - ../forgot-password.php
+        - ../reset-password.php
+        - ../install.php
+        - ../index.php

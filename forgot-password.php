@@ -88,7 +88,7 @@ if (empty($_SESSION['csrf_login'])) {
         <?php else: ?>
             <h2 class="h5 mb-3">Zapomenuté heslo</h2>
             <form method="post" novalidate>
-                <input type="hidden" name="csrf_token" value="<?= h($csrfLogin) ?>">
+                <input type="hidden" name="csrf_token" value="<?= h($_SESSION['csrf_login'] ?? '') ?>">
                 <div class="mb-3">
                     <label for="email" class="form-label">E-mail</label>
                     <input type="email" class="form-control" id="email" name="email"
