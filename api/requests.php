@@ -44,20 +44,27 @@ function handleList(): never
     $sort         = ($_GET['sort'] ?? 'asc') === 'desc' ? 'DESC' : 'ASC';
     $search       = trim(arrStr($_GET, 'search'));
 
-    $where  = ['r.deleted_at IS NULL'];
     $params = [];
 
-    if ($statusFilter !== '' && $statusFilter !== 'all') {
-        if ($statusFilter === 'mine') {
-            $where[]  = 'r.assigned_to_id = ?';
-            $params[] = currentUserId();
-        } else {
-            $where[]  = 'r.status = ?';
-            $params[] = $statusFilter;
+    if ($statusFilter === 'deleted') {
+        if (!isAdmin()) {
+            jsonErr('Nedostatečná oprávnění', 403);
         }
+        $where = ['r.deleted_at IS NOT NULL'];
     } else {
-        // Výchozí: aktivní (bez resolved)
-        $where[] = "r.status != 'resolved'";
+        $where = ['r.deleted_at IS NULL'];
+        if ($statusFilter !== '' && $statusFilter !== 'all') {
+            if ($statusFilter === 'mine') {
+                $where[]  = 'r.assigned_to_id = ?';
+                $params[] = currentUserId();
+            } else {
+                $where[]  = 'r.status = ?';
+                $params[] = $statusFilter;
+            }
+        } else {
+            // Výchozí: aktivní (bez resolved)
+            $where[] = "r.status != 'resolved'";
+        }
     }
 
     if ($search !== '') {
@@ -93,6 +100,9 @@ function handleList(): never
         $row['updated_at_local'] = toLocalTime($row['updated_at']);
         if ($row['resolved_at']) {
             $row['resolved_at_local'] = toLocalTime($row['resolved_at']);
+        }
+        if ($row['deleted_at']) {
+            $row['deleted_at_local'] = toLocalTime($row['deleted_at']);
         }
         if ($row['assigned_at']) {
             $row['assigned_at_local'] = toLocalTime($row['assigned_at']);

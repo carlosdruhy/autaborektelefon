@@ -96,6 +96,9 @@ touchSession();
             <button class="btn btn-outline-secondary filter-btn" data-filter="reopened">Znovuotevřené</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="resolved">Vyřízené</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="mine">Jen moje</button>
+            <?php if (isAdmin()): ?>
+            <button class="btn btn-outline-danger filter-btn" data-filter="deleted">Smazané</button>
+            <?php endif; ?>
         </div>
 
         <!-- Vyhledávání -->

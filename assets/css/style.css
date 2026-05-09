@@ -118,6 +118,11 @@ a:hover { color: var(--color-accent-dk); }
 .filter-btn.active {
     font-weight: 600;
 }
+.filter-btn.btn-outline-danger.active {
+    background-color: #dc3545;
+    border-color: #dc3545;
+    color: #fff;
+}
 
 /* ── Toolbar ──────────────────────────────────────────────────── */
 .req-toolbar {
@@ -233,6 +238,11 @@ a:hover { color: var(--color-accent-dk); }
 
 .badge-pending {
     background-color: #0d6efd;
+    color: #fff;
+}
+
+.badge-deleted {
+    background-color: #6c757d;
     color: #fff;
 }
 

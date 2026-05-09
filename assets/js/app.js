@@ -157,6 +157,9 @@ function createRequestCard(req) {
     const isNew    = !knownRequestIds.has(req.id) && knownRequestIds.size > 0;
 
     let badges = '';
+    if (req.deleted_at) {
+        badges += `<span class="badge-deleted ms-1"><i class="bi bi-trash3-fill"></i> Smazáno ${esc(req.deleted_at_local || '')}</span>`;
+    }
     if (req.status === 'resolved') {
         badges += `<span class="badge-resolved ms-1"><i class="bi bi-check-circle-fill"></i> Vyřízeno</span>`;
     }
