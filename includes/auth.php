@@ -129,7 +129,7 @@ function destroySession(): void
     if (ini_get('session.use_cookies')) {
         $params = session_get_cookie_params();
         setcookie(
-            session_name(),
+            (string)session_name(),
             '',
             time() - 42000,
             $params['path'],
@@ -141,6 +141,7 @@ function destroySession(): void
     session_destroy();
 }
 
+/** @param positive-int $bytes */
 function generateToken(int $bytes = 32): string
 {
     return bin2hex(random_bytes($bytes));

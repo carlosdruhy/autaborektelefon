@@ -6,7 +6,7 @@ declare(strict_types=1);
 /** @return array<string, string> */
 function getSettings(): array
 {
-    $stmt = getDB()->query('SELECT setting_key, setting_value FROM tel_settings');
+    $stmt = getDB()->query('SELECT setting_key, setting_value FROM tel_settings') ?: throw new \RuntimeException('Query failed');
     $rows = $stmt->fetchAll();
     $out = [];
     foreach ($rows as $row) {
@@ -214,7 +214,7 @@ function recordRateFail(string $action, string $ip, string $email = ''): void
 
 function countAnonymizable(int $days): int
 {
-    $cutoff = gmdate('Y-m-d H:i:s', strtotime("-{$days} days"));
+    $cutoff = gmdate('Y-m-d H:i:s', (int)strtotime("-{$days} days"));
     $stmt = getDB()->prepare(
         "SELECT COUNT(*) FROM tel_requests
          WHERE status = 'resolved'
@@ -230,7 +230,7 @@ function countAnonymizable(int $days): int
 function anonymizeRequests(int $days, int $adminId): int
 {
     $db     = getDB();
-    $cutoff = gmdate('Y-m-d H:i:s', strtotime("-{$days} days"));
+    $cutoff = gmdate('Y-m-d H:i:s', (int)strtotime("-{$days} days"));
 
     $stmt = $db->prepare(
         "SELECT id FROM tel_requests

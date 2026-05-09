@@ -38,7 +38,7 @@ function handleList(): never
         'SELECT id, name, email, role, is_active, can_reopen, created_at, last_login
          FROM tel_users
          ORDER BY name ASC'
-    );
+    ) ?: throw new \RuntimeException('Query failed');
     $rows = $stmt->fetchAll();
     foreach ($rows as &$r) {
         if ($r['created_at']) $r['created_at_local'] = toLocalTime($r['created_at']);

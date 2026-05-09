@@ -88,7 +88,7 @@ if (!$invalid && $_SERVER['REQUEST_METHOD'] === 'POST') {
             <img src="assets/img/logo.jpg" alt="Auta Borek a.s." class="login-logo mb-2">
         </div>
 
-        <?php if ($invalid): ?>
+        <?php if ($tokenRow === false): ?>
             <div class="alert alert-danger">
                 Odkaz je neplatný nebo vypršel.
             </div>
