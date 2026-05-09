@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     startRefreshTimer();
     initSessionWatcher();
     initSoundToggle();
+    initNotificationBtn();
     initCharCounter();
     initFilterSort();
     initSmsModal();
@@ -221,7 +222,7 @@ function detectNewRequests(requests) {
     if (newOnes.length > 0) {
         if (soundEnabled) playNotificationSound();
         if (document.hidden) {
-            showBrowserNotification(newOnes.length);
+            showBrowserNotification(newOnes);
         }
     }
 
@@ -234,18 +235,64 @@ function updateTabTitle(count) {
         : APP.appName;
 }
 
-function requestBrowserNotificationPermission() {
-    if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
+function initNotificationBtn() {
+    const btn = document.getElementById('notifBtn');
+    if (!btn) return;
+    if (!('Notification' in window)) {
+        btn.remove();
+        return;
+    }
+    updateNotifIcon();
+    btn.addEventListener('click', async () => {
+        if (Notification.permission !== 'default') return;
+        const result = await Notification.requestPermission();
+        updateNotifIcon();
+        if (result === 'granted') {
+            new Notification(APP.appName, { body: 'Upozornění na nové požadavky jsou zapnuta.', icon: '/favicon.svg' });
+        }
+    });
+}
+
+function updateNotifIcon() {
+    const btn  = document.getElementById('notifBtn');
+    const icon = document.getElementById('notifIcon');
+    if (!btn || !icon) return;
+    const perm = Notification.permission;
+    if (perm === 'granted') {
+        icon.className = 'bi bi-bell-fill';
+        btn.style.color      = 'var(--color-accent)';
+        btn.style.borderColor = 'var(--color-accent)';
+        btn.title    = 'Upozornění na nové požadavky: zapnuta';
+        btn.disabled = false;
+    } else if (perm === 'denied') {
+        icon.className = 'bi bi-bell-slash';
+        btn.title    = 'Upozornění zakázána v nastavení prohlížeče';
+        btn.disabled = true;
+        btn.style.opacity = '0.5';
+    } else {
+        icon.className = 'bi bi-bell';
+        btn.title    = 'Klikněte pro zapnutí upozornění na nové požadavky';
+        btn.disabled = false;
     }
 }
 
-function showBrowserNotification(count) {
+function showBrowserNotification(newOnes) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    new Notification(APP.appName, {
-        body: `${count} nový/é požadavek/y`,
-        icon: '/favicon.ico',
+    const count = newOnes.length;
+    let body;
+    if (count === 1) {
+        body = `SPZ: ${newOnes[0].spz} – ${newOnes[0].client_name}`;
+    } else {
+        const spzList = newOnes.slice(0, 3).map(r => r.spz).join(', ');
+        body = `${count} nové požadavky: ${spzList}${count > 3 ? ', …' : ''}`;
+    }
+    const n = new Notification(APP.appName, {
+        body,
+        icon:      '/favicon.svg',
+        tag:       'new-request',
+        renotify:  true,
     });
+    n.onclick = () => { window.focus(); n.close(); };
 }
 
 function playNotificationSound() {
@@ -270,10 +317,6 @@ function initSoundToggle() {
         soundEnabled = !soundEnabled;
         savePreference(KEYS.SOUND, soundEnabled ? '1' : '0');
         updateSoundIcon();
-        // Vyžádat oprávnění pro Browser Notification při první uživatelské akci
-        if (soundEnabled && 'Notification' in window && Notification.permission === 'default') {
-            Notification.requestPermission();
-        }
     });
 }
 

@@ -122,6 +122,11 @@ touchSession();
         <button id="soundBtn" class="btn btn-sm btn-outline-secondary" title="Zvukové upozornění">
             <i class="bi bi-volume-mute-fill" id="soundIcon"></i>
         </button>
+
+        <!-- Notifikace -->
+        <button id="notifBtn" class="btn btn-sm btn-outline-secondary" title="Klikněte pro zapnutí upozornění na nové požadavky">
+            <i class="bi bi-bell" id="notifIcon"></i>
+        </button>
     </div>
 
     <!-- Počet výsledků -->
