@@ -38,7 +38,9 @@ touchSession();
         <span class="navbar-app-title d-none d-md-block">Evidence telefonických<br>požadavků</span>
     </a>
     <div class="ms-auto d-flex align-items-center gap-2">
-        <span class="text-white-50 small d-none d-sm-inline"><?= h(currentUserName()) ?></span>
+        <span class="text-white-50 small d-none d-sm-inline">
+            <?= h(currentUserName()) ?><span id="sessionCountdown" class="ms-1 opacity-75"></span>
+        </span>
         <?php if (isAdmin()): ?>
             <a href="admin/" class="btn btn-sm btn-outline-light">
                 <i class="bi bi-gear-fill"></i> Admin

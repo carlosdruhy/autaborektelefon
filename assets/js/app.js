@@ -119,6 +119,7 @@ async function loadRequests() {
         detectNewRequests(allRequests);
         renderRequestList(allRequests);
         updateTabTitle(allRequests.length);
+        updateSessionCountdown();
     } catch (e) {
         console.error('loadRequests error', e);
     }
@@ -641,8 +642,8 @@ function initSessionWatcher() {
 }
 
 function checkSessionExpiry() {
-    const start   = parseInt(sessionStorage.getItem('AB_SESSION_START') || '0', 10);
-    const elapsed = (Date.now() - start) / 1000 / 60; // minuty
+    const start     = parseInt(sessionStorage.getItem('AB_SESSION_START') || '0', 10);
+    const elapsed   = (Date.now() - start) / 1000 / 60;
     const remaining = APP.sessionTimeout - elapsed;
 
     if (remaining <= 5 && !sessionWarnShown) {
@@ -651,11 +652,21 @@ function checkSessionExpiry() {
     }
 }
 
+function updateSessionCountdown() {
+    const el = document.getElementById('sessionCountdown');
+    if (!el) return;
+    const start     = parseInt(sessionStorage.getItem('AB_SESSION_START') || '0', 10);
+    const elapsed   = (Date.now() - start) / 1000 / 60;
+    const remaining = Math.max(0, Math.round(APP.sessionTimeout - elapsed));
+    el.textContent  = `(${remaining} min)`;
+}
+
 function extendSession() {
     apiGet('/settings.php').then(() => {
         sessionStorage.setItem('AB_SESSION_START', Date.now().toString());
         sessionWarnShown = false;
         document.getElementById('sessionWarning')?.classList.add('d-none');
+        updateSessionCountdown();
     });
 }
 
