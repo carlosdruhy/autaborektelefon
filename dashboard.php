@@ -23,6 +23,7 @@ touchSession();
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Telefon">
 <link rel="apple-touch-icon" href="/favicon.svg">
+<script>(function(){var t=localStorage.getItem('AB_TEL_THEME');if(t==='dark')document.documentElement.setAttribute('data-bs-theme','dark');}());</script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
 <link rel="stylesheet" href="assets/css/style.css">
@@ -41,6 +42,9 @@ touchSession();
         <span class="text-white-50 small d-none d-sm-inline">
             <?= h(currentUserName()) ?><span id="sessionCountdown" class="ms-1 opacity-75"></span>
         </span>
+        <button id="darkModeBtn" class="btn btn-sm btn-outline-light" title="Přepnout tmavý/světlý režim">
+            <i id="darkModeIcon" class="bi bi-moon-fill"></i>
+        </button>
         <?php if (isAdmin()): ?>
             <a href="admin/" class="btn btn-sm btn-outline-light">
                 <i class="bi bi-gear-fill"></i> Admin

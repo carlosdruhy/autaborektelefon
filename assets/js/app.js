@@ -12,6 +12,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initSessionWatcher();
     initSoundToggle();
     initNotificationBtn();
+    initDarkMode();
+    initKeyboardShortcuts();
     initCharCounter();
     initFilterSort();
     initSmsModal();
@@ -29,6 +31,7 @@ const KEYS = {
     SORT:    'AB_TEL_SORT',
     FILTER:  'AB_TEL_FILTER',
     SOUND:   'AB_TEL_SOUND',
+    THEME:   'AB_TEL_THEME',
 };
 
 let currentSort   = 'asc';
@@ -327,6 +330,56 @@ function updateSoundIcon() {
     const icon = document.getElementById('soundIcon');
     if (!icon) return;
     icon.className = soundEnabled ? 'bi bi-volume-up-fill' : 'bi bi-volume-mute-fill';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   E2. Dark mode
+═══════════════════════════════════════════════════════════════ */
+
+function initDarkMode() {
+    const btn = document.getElementById('darkModeBtn');
+    if (!btn) return;
+    updateDarkModeIcon();
+    btn.addEventListener('click', () => {
+        const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+        const next   = isDark ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-bs-theme', next);
+        localStorage.setItem(KEYS.THEME, next);
+        updateDarkModeIcon();
+    });
+}
+
+function updateDarkModeIcon() {
+    const icon = document.getElementById('darkModeIcon');
+    if (!icon) return;
+    const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    icon.className = isDark ? 'bi bi-sun-fill' : 'bi bi-moon-fill';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   E3. Klávesové zkratky
+═══════════════════════════════════════════════════════════════ */
+
+function initKeyboardShortcuts() {
+    document.addEventListener('keydown', e => {
+        const tag = document.activeElement?.tagName;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag)) return;
+        if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+        switch (e.key) {
+            case 'n':
+            case 'N':
+                e.preventDefault();
+                bootstrap.Modal.getOrCreateInstance(
+                    document.getElementById('newRequestModal')
+                ).show();
+                break;
+            case '/':
+                e.preventDefault();
+                document.getElementById('searchInput')?.focus();
+                break;
+        }
+    });
 }
 
 /* ═══════════════════════════════════════════════════════════════

@@ -325,6 +325,73 @@ a:hover { color: var(--color-accent-dk); }
     border-left: 4px solid #fd7e14;
 }
 
+/* ── Dark mode ───────────────────────────────────────────────── */
+[data-bs-theme="dark"] body {
+    background-color: #141618;
+    background-image: radial-gradient(circle, #1f2226 1px, transparent 1px);
+}
+
+[data-bs-theme="dark"] .req-toolbar {
+    background: #1c1f23;
+    border-color: #373b40;
+}
+
+[data-bs-theme="dark"] .req-card {
+    background: #1c1f23;
+    border-color: #373b40;
+}
+[data-bs-theme="dark"] .req-card:hover {
+    border-color: #4d545c;
+}
+
+[data-bs-theme="dark"] .req-card.level-1 {
+    background: linear-gradient(to right, rgba(40,167,69,.13) 0%, #1c1f23 80px);
+}
+[data-bs-theme="dark"] .req-card.level-2 {
+    background: linear-gradient(to right, rgba(255,193,7,.11) 0%, #1c1f23 80px);
+}
+[data-bs-theme="dark"] .req-card.level-3 {
+    background: linear-gradient(to right, rgba(253,126,20,.11) 0%, #1c1f23 80px);
+}
+[data-bs-theme="dark"] .req-card.level-4 {
+    background: linear-gradient(to right, rgba(220,53,69,.11) 0%, #1c1f23 80px);
+    box-shadow: var(--shadow-sm), inset 5px 0 0 var(--color-level-4);
+}
+[data-bs-theme="dark"] .req-card.level-5 {
+    background: linear-gradient(to right, rgba(200,0,0,.13) 0%, #1c1f23 80px);
+    box-shadow: var(--shadow-sm), 0 0 0 1px rgba(220,53,69,.3), inset 5px 0 0 var(--color-level-5);
+}
+
+[data-bs-theme="dark"] .badge-spz {
+    background: #1a1608;
+    color: #ddc870;
+    border-color: #7a6018;
+    box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
+}
+
+[data-bs-theme="dark"] .modal-header {
+    background: #161a1d;
+    border-bottom-color: #373b40;
+}
+
+[data-bs-theme="dark"] .history-entry {
+    border-left-color: #454c54;
+}
+[data-bs-theme="dark"] .history-entry:hover {
+    border-left-color: var(--color-accent);
+}
+
+[data-bs-theme="dark"] .admin-table th {
+    background-color: #161a1d;
+    color: #8d99a6;
+}
+
+[data-bs-theme="dark"] #sessionWarning {
+    background-color: #2a1e0a;
+    border-color: #6b4c00;
+    color: #f5c842;
+}
+
 /* ── Responsivita ────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .req-card { margin-bottom: 0.4rem; }
