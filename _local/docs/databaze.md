@@ -18,7 +18,9 @@
 | `tel_settings`        | Konfigurace systému (key-value)                 |
 | `tel_password_resets` | Tokeny pro reset/nastavení hesla                |
 | `tel_rate_limits`     | Ochrana před brute-force útoky                  |
-| `tel_vehicles`        | Evidence vozidel SPZ → VIN + model (v. 2.0)     |
+| `tel_vehicles`        | Evidence vozidel SPZ → model, rok, VIN (S3 sync) |
+| `tel_sms_queue`       | Fronta odchozích SMS                            |
+| `tel_service_orders`  | Objednávky do servisu (snímek plánovače z S3)   |
 
 ---
 
@@ -163,6 +165,13 @@ CREATE TABLE `tel_settings` (
 | `color_level_3` | `60` | Práh úrovně 3→4 (minuty) |
 | `color_level_4` | `120` | Práh úrovně 4→5 (minuty) |
 | `session_timeout` | `500` | Session timeout nečinnosti (minuty) |
+| `s3_region`, `s3_bucket`, `s3_access_key_id`, `s3_secret_access_key` | — | Společné S3 přihlašovací údaje (vozidla, objednávky, zálohy) |
+| `vehicles_sync_key` | — | Klíč cron endpointu `api/sync-vehicles.php` (vozidla + objednávky) |
+| `s3_object_key`, `s3_last_etag`, `s3_file_last_modified` | — | Soubor vozidel `export-spz.csv` |
+| `vehicles_last_sync`, `vehicles_last_sync_count`, `vehicles_sync_log` | — | Stav a JSON protokol synchronizace vozidel (posledních 25) |
+| `s3_orders_object_key`, `s3_orders_last_etag`, `s3_orders_file_last_modified` | — | Soubor `planovac-objednano.csv` |
+| `s3_prijem_object_key`, `s3_prijem_last_etag`, `s3_prijem_file_last_modified` | — | Soubor `planovac-prijem.csv` |
+| `orders_last_sync`, `orders_last_sync_count`, `orders_sync_log` | — | Stav (počet = celkem řádků v tabulce) a JSON protokol synchronizace objednávek |
 
 ---
 
@@ -221,14 +230,51 @@ Exponential backoff: každý další pokus po lockoutu prodlužuje lockout 2×.
 
 ```sql
 CREATE TABLE `tel_vehicles` (
-  `spz_normalized` VARCHAR(20)  NOT NULL,
-  `spz_original`   VARCHAR(20)  NOT NULL,
-  `vin`            VARCHAR(17)  DEFAULT NULL,
-  `model`          VARCHAR(100) DEFAULT NULL,
-  `updated_at`     DATETIME     NOT NULL,
+  `spz_normalized` VARCHAR(20)       NOT NULL,
+  `spz_original`   VARCHAR(20)       NOT NULL,
+  `external_id`    INT UNSIGNED      DEFAULT NULL,
+  `model`          VARCHAR(100)      DEFAULT NULL,
+  `year`           SMALLINT UNSIGNED DEFAULT NULL,
+  `vin`            VARCHAR(17)       DEFAULT NULL,
+  `updated_at`     DATETIME          NOT NULL,
   PRIMARY KEY (`spz_normalized`)
 ) ENGINE=InnoDB;
 ```
 
-Připraveno pro v. 2.0 — lookup SPZ → VIN + model z DMS (CSV import).  
+Lookup SPZ → model, rok, VIN. Plní se ze S3 souboru `export-spz.csv` (`klic;spz;nazvoz;rokvyr;vin`) přes `importVehiclesCsv()` — UPSERT podle `spz_normalized`.  
 `spz_normalized` = SPZ bez mezer a pomlček, uppercase (např. `1AB1234`).
+
+---
+
+## tel_service_orders
+
+```sql
+CREATE TABLE `tel_service_orders` (
+  `id`             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `source`         VARCHAR(20)  NOT NULL DEFAULT 'objednano',
+  `scheduled_at`   DATETIME     NOT NULL,
+  `spz_normalized` VARCHAR(20)  DEFAULT NULL,
+  `spz_original`   VARCHAR(20)  DEFAULT NULL,
+  `vin`            VARCHAR(17)  DEFAULT NULL,
+  `client_name`    VARCHAR(100) DEFAULT NULL,
+  `imported_at`    DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `idx_so_spz`       (`spz_normalized`),
+  INDEX `idx_so_vin`       (`vin`),
+  INDEX `idx_so_scheduled` (`scheduled_at`),
+  INDEX `idx_so_source`    (`source`)
+) ENGINE=InnoDB;
+```
+
+Objednávky do servisu z plánovače DMS. Dva zdrojové soubory na S3 se stejnou strukturou `datum_zac;spz;fabkod;vinkod;klient`:
+
+| `source`    | Soubor                    |
+|-------------|---------------------------|
+| `objednano` | `planovac-objednano.csv`  |
+| `prijem`    | `planovac-prijem.csv`     |
+
+- `vin` = `fabkod` + `vinkod` (3 + 14 znaků), validace `[A-HJ-NPR-Z0-9]{17}`, jinak NULL.
+- `scheduled_at` je UTC; zdrojový `datum_zac` je lokální čas Europe/Prague (`pragueToUtc()`).
+- Tabulka je **snímek**: každý import (`importServiceOrdersCsv($db, $path, $source)`) v jedné transakci smaže řádky svého `source` a vloží nové. Žádný unikátní klíč; stejná objednávka bývá v obou souborech (dedup až při zobrazení).
+- Řádek bez SPZ i bez platného VIN se při importu přeskočí.
+- Migrace: `_local/migrate-service-orders.sql`, `_local/migrate-service-orders-prijem.sql`.

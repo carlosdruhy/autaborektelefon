@@ -1,7 +1,7 @@
 # PRD – Evidenční systém telefonických požadavků AutoBorek
 
-**Verze:** 1.6  
-**Datum:** 2026-07-03  
+**Verze:** 1.7  
+**Datum:** 2026-09-18  
 **Adresa aplikace:** https://tel.auto-borek.cz  
 **Administrace:** https://tel.auto-borek.cz/admin/  
 **Technologie:** PHP 8+, MySQL, JavaScript, Bootstrap 5  
@@ -19,6 +19,7 @@
 | 1.4   | 2026-06-25 | Značka vozidla z VIN (WMI lookup); barevné brand badge pro Renault/Dacia/Nissan; u vyřízených požadavků zobrazení doby řešení místo stáří |
 | 1.5   | 2026-06-26 | Barevné rozlišení vyřízených požadavků podle doby řešení (ne stáří); lookup vozidla při zadávání nového požadavku (blur na SPZ); statistiky podle doby vyřízení doplněny o procentuální podíl |
 | 1.6   | 2026-07-03 | Editace jména a e-mailu uživatele v admin správě uživatelů |
+| 1.7   | 2026-09-18 | Plánovač – objednávky do servisu: tabulka `tel_service_orders` plněná ze dvou S3 souborů (`planovac-objednano.csv`, `planovac-prijem.csv`); termín objednání + jméno zákazníka na kartě požadavku a v detailu; nová admin stránka Objednávky; jeden cron endpoint pro vozidla i objednávky; sjednocená S3 sync logika; nové rozložení karty (2 sloupce, poznámka technika vpravo nahoře) |
 
 ---
 
@@ -98,6 +99,16 @@ new ──► in_progress ──► resolved ──► reopened ──► in_pro
 - **Řazení:** výchozí od nejstarších, přepnutí na nejnovější první. Nastavení se ukládá do **localStorage**.
 - **Vyhledávání:** live-filter nad aktuálně načtenými aktivními daty podle SPZ, jména nebo telefonu klienta.
   - Poznámka: prohledává pouze aktivní požadavky aktuálně zobrazené v seznamu. Hledání ve vyřízených požadavcích (server-side) je plánováno pro v. 2.0.
+
+**Rozložení karty požadavku** (dvousloupcová mřížka `.card-grid`, na mobilu jeden sloupec):
+
+| Řádek | Levý sloupec                                         | Pravý sloupec                                              |
+|-------|------------------------------------------------------|------------------------------------------------------------|
+| 1     | ikona úrovně · SPZ · jméno · telefon · stavové badge | 🔧 poznámka technika (zkrácená, tooltip) · stáří · datum   |
+| 2     | brand badge · model · rok · VIN                      | —                                                          |
+| 3     | text požadavku                                       | 📅 Plánovač: termín (zákazník) — viz 3.13                  |
+
+Pravý sloupec je pro řádky 1 a 3 týž grid-sloupec, takže poznámka technika a Plánovač mají vždy stejný levý okraj.
 
 ### 3.4 Notifikace nových požadavků
 
@@ -215,6 +226,27 @@ Každá editace se loguje do `tel_request_history`.
 - SLA čas = od `created_at` do `resolved_at` (včetně doby ve stavu `pending`). Toto je záměrné — pending = klient čeká, čas běží.
 - Znovuotevřené tickety tvoří nový cyklus s novou `resolved_at` po opětovném uzavření.
 
+### 3.13 Plánovač – objednávky do servisu na kartě požadavku
+
+Když je vozidlo z požadavku objednané do servisu, technik to vidí přímo na kartě i v detailu, aniž by musel otevírat plánovač v DMS.
+
+**Zdroj dat:** tabulka `tel_service_orders` (viz 4.9), plněná ze dvou CSV souborů plánovače na S3.
+
+**Párování k požadavku:**
+- primárně podle SPZ (`tel_requests.spz` = `tel_service_orders.spz_normalized`),
+- záložně podle VIN z evidence vozidel (`tel_vehicles.vin` = `tel_service_orders.vin`) — pokrývá objednávky nových vozidel bez SPZ.
+
+**Kdy se termín zobrazí:**
+1. termín je **dnes nebo v budoucnu** (hranice = dnešní půlnoc v Europe/Prague; dnešní termín zůstává viditelný celý den i po svém čase),
+2. u **vyřízeného** požadavku navíc **datum termínu ≥ datum vyřízení** (porovnává se pražský den, ne čas).
+
+**Zobrazení:**
+- Karta: `📅 Plánovač: 13.10.2026 11:00 (Jan Novák)` v pravém sloupci 3. řádku; více termínů oddělených ` · `.
+- Detail (modal): řádek „Objednáno do servisu: …“ pod informací o vozidle.
+- Stejné vozidlo se stejným termínem v obou zdrojových souborech se zobrazí jen jednou (přednost `objednano`); termín pouze ze souboru příjmu má příponu „– příjem“.
+
+**Implementace:** `getUpcomingServiceOrders()` načte jedním dotazem všechny nadcházející objednávky pro SPZ/VIN z aktuální stránky seznamu, `matchServiceOrders()` je přiřadí k řádkům a deduplikuje; API vrací pole `service_orders[] = {scheduled_at_local, client_name, source}`.
+
 ---
 
 ## 4. Administrace (`/admin/`)
@@ -239,9 +271,12 @@ Přístupná pouze pro roli `admin`.
 | Práh barvy úrovně 3          | Minuty do přechodu na úroveň 4                       | 60 min   |
 | Práh barvy úrovně 4          | Minuty do přechodu na úroveň 5                       | 120 min  |
 | Timeout nečinnosti session   | Minut nečinnosti do automatického odhlášení          | 500 min  |
-| S3 Region / Bucket / Object key | Amazon S3 pro synchronizaci vozidel a zálohy DB  | —        |
+| S3 Region / Bucket          | Amazon S3 pro synchronizaci vozidel, objednávek a zálohy DB | —        |
+| Cesta k souboru vozidel      | Object key `export-spz.csv` (`s3_object_key`)         | —        |
+| Cesta k souboru objednávek (objednáno) | Object key `planovac-objednano.csv` (`s3_orders_object_key`) | — |
+| Cesta k souboru objednávek (příjem)    | Object key `planovac-prijem.csv` (`s3_prijem_object_key`)    | — |
 | AWS Access Key ID / Secret   | Přihlašovací údaje S3 (chráněno e-mailovým kódem)   | —        |
-| Klíč pro cron endpoint vozidel | Tajný řetězec pro `api/sync-vehicles.php?key=…`   | —        |
+| Klíč pro cron endpoint       | Tajný řetězec pro `api/sync-vehicles.php?key=…` (vozidla + objednávky) | — |
 | Složka pro DB zálohy v S3    | Prefix objektu (např. `backups`)                     | backups  |
 | Klíč pro cron endpoint zálohy | Tajný řetězec pro `crony/backup-db.php?key=…`      | —        |
 
@@ -279,8 +314,9 @@ Přístupná pouze pro roli `admin`.
 Správa databáze vozidel sloužící pro automatický lookup SPZ.
 
 **Synchronizace ze S3:**
-- Admin spustí synchronizaci ručně tlačítkem, nebo probíhá automaticky přes cron (`api/sync-vehicles.php?key=…`).
+- Admin spustí synchronizaci ručně tlačítkem (stahuje vždy), nebo probíhá automaticky přes cron (`api/sync-vehicles.php?key=…`). Tentýž cron endpoint synchronizuje i objednávky do servisu (viz 4.9).
 - Cron endpoint před stažením provede HEAD request (ETag) — pokud se soubor nezměnil, stahování přeskočí.
+- Společná logika (HEAD → ETag → stažení → import → nastavení → protokol) je v `fetchAndImportS3Csv()`; obálky `syncVehiclesFromS3()` a `syncServiceOrdersFromS3()` používá cron i ruční tlačítka.
 - Výsledky synchronizace: počet nově vložených, aktualizovaných a přeskočených řádků.
 - Protokol posledních 25 synchronizací (čas, zdroj `ruční/cron`, výsledek, detail chyby).
 
@@ -294,7 +330,7 @@ Správa databáze vozidel sloužící pro automatický lookup SPZ.
 - SPZ se normalizuje (uppercase, bez mezer/pomlček) při importu do `spz_normalized`.
 
 **Zabezpečení S3 nastavení:**
-- Nastavení AWS klíčů je ve výchozím stavu uzamčeno.
+- Nastavení AWS klíčů (společné pro vozidla, objednávky i zálohy) je ve výchozím stavu uzamčeno. Zde se nastavují i cesty k oběma souborům objednávek.
 - Odemčení vyžaduje 6místný jednorázový kód zaslaný e-mailem (platnost 10 minut, max. 3 pokusy).
 - Po uložení se sekce automaticky znovu zamkne.
 
@@ -310,6 +346,37 @@ Automatické zálohy databáze do Amazon S3.
 - Protokol posledních pokusů: čas, název souboru, velikost.
 - Klíč pro cron endpoint se vygeneruje automaticky při prvním zobrazení stránky; lze resetovat.
 - Cron URL se zobrazí v `admin/settings.php` k nastavení na webhostingu.
+
+### 4.9 Objednávky do servisu (`/admin/orders.php`)
+
+Správa tabulky `tel_service_orders`, která napájí Plánovač na kartě požadavku (3.13).
+
+**Zdrojové soubory (Amazon S3, stejná složka jako `export-spz.csv`):**
+
+| Soubor                     | `source`    | Popis                              |
+|----------------------------|-------------|------------------------------------|
+| `planovac-objednano.csv`   | `objednano` | Vozidla objednaná do servisu       |
+| `planovac-prijem.csv`      | `prijem`    | Plán příjmu vozidel                |
+
+Oba soubory mají stejnou strukturu: `datum_zac;spz;fabkod;vinkod;klient` (Windows-1250 nebo UTF-8, oddělovač `;`, hodnoty doplněné mezerami). Cca 70 % řádků je v obou souborech shodných.
+
+**Import (`importServiceOrdersCsv()`):**
+- **VIN = `fabkod` + `vinkod`** (3 + 14 znaků); validace `[A-HJ-NPR-Z0-9]{17}`, jinak NULL.
+- `datum_zac` je lokální čas plánovače (Europe/Prague) → převádí se na UTC (`pragueToUtc()`).
+- SPZ se normalizuje jako u vozidel; řádek bez SPZ i bez platného VIN se přeskočí.
+- Soubor je **snímek** aktuálního stavu: import v jedné transakci smaže řádky svého `source` a vloží nové. Zrušené objednávky tak z tabulky zmizí, řádky druhého zdroje zůstávají.
+- Ochrana proti cizímu souboru: hlavička musí začínat `datum_zac`, jinak se import odmítne a tabulka se nezmění.
+
+**Synchronizace:**
+- Cron `api/sync-vehicles.php?key=…` synchronizuje vozidla → objednáno → příjem; každý soubor má vlastní ETag (`s3_orders_last_etag`, `s3_prijem_last_etag`). Soubor bez nastavené cesty se přeskočí bez chyby. Odpověď: `{vehicles, orders: {objednano, prijem}}`; při chybě kterékoli části HTTP 500.
+- Ruční tlačítko na stránce Objednávky synchronizuje oba soubory (ignoruje ETag).
+
+**Stránka zobrazuje:**
+- počet objednávek v DB (a z toho nadcházejících), poslední synchronizaci, cesty a datum změny obou souborů,
+- protokol posledních 25 synchronizací (čas, ruční/cron, soubor, výsledek, načteno/přeskočeno, chyba),
+- náhled nadcházejících objednávek od dneška (max. 500) seskupených po dnech: čas, SPZ, model z evidence vozidel, VIN, klient, zdroj.
+
+**Migrace:** `_local/migrate-service-orders.sql` (tabulka + nastavení), poté `_local/migrate-service-orders-prijem.sql` (sloupec `source` + nastavení pro příjem).
 
 ---
 
@@ -362,7 +429,7 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 │   ├── settings.php
 │   ├── stats.php
 │   ├── sms.php
-│   └── sync-vehicles.php       ← cron endpoint: S3 → tel_vehicles (auth: ?key=…)
+│   └── sync-vehicles.php       ← cron endpoint (auth: ?key=…): S3 → tel_vehicles + tel_service_orders
 │
 ├── admin/
 │   ├── index.php
@@ -370,7 +437,8 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 │   ├── settings.php            ← systém + S3 + DB zálohy
 │   ├── stats.php
 │   ├── sms.php
-│   ├── import-vehicles.php     ← evidence vozidel + S3 sync + protokol
+│   ├── import-vehicles.php     ← evidence vozidel + S3 nastavení (společné) + protokol
+│   ├── orders.php              ← objednávky do servisu: S3 sync, protokol, náhled
 │   ├── .htaccess
 │   └── api/
 │       └── users.php
@@ -411,6 +479,7 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `tel_rate_limits`     | Ochrana před brute-force                                           |
 | `tel_vehicles`        | Evidence vozidel: SPZ → model, rok výroby, VIN                    |
 | `tel_sms_queue`       | Fronta odchozích SMS                                               |
+| `tel_service_orders`  | Objednávky do servisu (snímek plánovače ze dvou S3 souborů)        |
 
 #### tel_vehicles — pole
 
@@ -423,6 +492,21 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `year`          | SMALLINT UNSIGNED| Rok výroby                                            |
 | `vin`           | VARCHAR(17)      | VIN; NULL pokud nevalidní (`[A-HJ-NPR-Z0-9]{17}`)     |
 | `updated_at`    | DATETIME         | UTC; čas posledního UPSERT                            |
+
+#### tel_service_orders — pole
+
+| Sloupec         | Typ              | Poznámka                                                       |
+|-----------------|------------------|----------------------------------------------------------------|
+| `id`            | INT UNSIGNED     | PK, auto increment                                             |
+| `source`        | VARCHAR(20)      | `objednano` / `prijem` — zdrojový soubor; index                |
+| `scheduled_at`  | DATETIME         | Termín v UTC (zdroj je Europe/Prague); index                   |
+| `spz_normalized`| VARCHAR(20)      | Normalizovaná SPZ (NULL u nových vozidel bez SPZ); index       |
+| `spz_original`  | VARCHAR(20)      | Původní zápis                                                  |
+| `vin`           | VARCHAR(17)      | `fabkod` + `vinkod`; NULL pokud nevalidní; index               |
+| `client_name`   | VARCHAR(100)     | Zákazník z plánovače                                           |
+| `imported_at`   | DATETIME         | UTC; čas importu snímku                                        |
+
+Žádný unikátní klíč — tabulka je snímek, každý import nahrazuje všechny řádky daného `source`.
 
 #### tel_requests — klíčová pole
 
@@ -584,6 +668,8 @@ Implementace: tabulka `tel_rate_limits` (`ip_address`, `email`, `action`, `attem
 | US-19 | Technik   | Chci na kartě vidět model a rok vozidla, abych věděl, s čím budu pracovat, ještě před otevřením detailu. | Musí mít  |
 | US-20 | Admin     | Chci synchronizovat databázi vozidel ze S3 ručně nebo přes cron.                                         | Musí mít  |
 | US-21 | Admin     | Chci mít automatické zálohy databáze na S3, abych mohl obnovit data v případě výpadku.                   | Musí mít  |
+| US-22 | Technik   | Chci na kartě požadavku vidět, na kdy je vozidlo objednané do servisu a na koho, abych klientovi rovnou odpověděl. | Musí mít  |
+| US-23 | Admin     | Chci, aby se objednávky z plánovače načítaly automaticky stejným cronem jako vozidla, bez další konfigurace. | Musí mít  |
 
 ---
 

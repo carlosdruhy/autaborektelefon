@@ -150,6 +150,18 @@ Po přihlášení jako admin přejděte na **Admin → Nastavení** a zkontroluj
 | Práh barvy 4→5 | 120 min | Kdy červená → tmavě červená (pulsující) |
 | Session timeout | 500 min | Nečinnost před automatickým odhlášením |
 
+### 10. Synchronizace vozidel a objednávek ze S3 (volitelné)
+
+1. V phpMyAdmin spusťte postupně `_local/migrate-vehicles.sql`, `_local/migrate-vehicles-sync.sql`, `_local/migrate-service-orders.sql`, `_local/migrate-service-orders-prijem.sql` (u čisté instalace přes `install.php` jsou tabulky už vytvořené; spusťte jen `INSERT IGNORE` části pro nastavení, nebo celé skripty — `INSERT IGNORE` je idempotentní).
+2. **Admin → Vozidla → Upravit** (přijde e-mailový ověřovací kód) a vyplňte: Region, Bucket, AWS klíče, cesty k souborům:
+   - vozidla: `zmenynv/export-spz.csv`
+   - objednávky (objednáno): `zmenynv/planovac-objednano.csv`
+   - objednávky (příjem): `zmenynv/planovac-prijem.csv`
+   - klíč pro cron endpoint (tlačítko Generovat).
+3. Ověřte ručně tlačítky **Synchronizovat ze S3** na stránkách Vozidla a Objednávky.
+4. Na hostingu (WebGlobe) nastavte cron, který každé ~3 hodiny volá URL zobrazenou na stránce Vozidla:
+   `https://tel.auto-borek.cz/api/sync-vehicles.php?key=…` — jedno volání synchronizuje vozidla i oba soubory objednávek (stahuje se jen soubor, jehož ETag se změnil).
+
 ---
 
 ## Řešení problémů
