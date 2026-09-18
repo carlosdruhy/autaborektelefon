@@ -41,6 +41,8 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
+        <a href="import-vehicles.php" class="btn btn-sm btn-outline-light">Vozidla</a>
+        <a href="orders.php" class="btn btn-sm btn-outline-light">Objednávky</a>
         <a href="../logout.php" class="btn btn-sm btn-outline-light">Odhlásit</a>
     </div>
 </nav>
@@ -74,12 +76,13 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
                             <tr>
                                 <th>Technik</th>
                                 <th class="text-end">Vyřízeno</th>
+                                <th class="text-end">Podíl</th>
                                 <th class="text-end">Prům. čas (min)</th>
                                 <th class="text-end">Znovuotevřeno</th>
                             </tr>
                         </thead>
                         <tbody id="techTable">
-                            <tr><td colspan="4" class="text-center py-2">
+                            <tr><td colspan="5" class="text-center py-2">
                                 <div class="spinner-border spinner-border-sm"></div>
                             </td></tr>
                         </tbody>
@@ -98,10 +101,11 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
                             <tr>
                                 <th>Časové pásmo</th>
                                 <th class="text-end">Počet</th>
+                                <th class="text-end">%</th>
                             </tr>
                         </thead>
                         <tbody id="ageTable">
-                            <tr><td colspan="2" class="text-center py-2">
+                            <tr><td colspan="3" class="text-center py-2">
                                 <div class="spinner-border spinner-border-sm"></div>
                             </td></tr>
                         </tbody>

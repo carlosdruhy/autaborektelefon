@@ -246,6 +246,38 @@ a:hover { color: var(--color-accent-dk); }
     color: #fff;
 }
 
+/* ── Brand badges (Renault / Dacia / Nissan / ostatní) ───────── */
+.badge-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 0.2em 0.55em;
+    border-radius: 3px;
+    white-space: nowrap;
+    vertical-align: middle;
+    text-transform: uppercase;
+    line-height: 1.4;
+}
+.badge-brand-renault {
+    background: #f5c518;
+    color: #1a1200;
+}
+.badge-brand-dacia {
+    background: #1a3a66;
+    color: #fff;
+}
+.badge-brand-nissan {
+    background: #c3142d;
+    color: #fff;
+}
+.badge-brand-other {
+    background: #6c757d;
+    color: #fff;
+}
+
 .badge-sms {
     background: none;
     border: 1px solid var(--color-accent);
@@ -262,6 +294,29 @@ a:hover { color: var(--color-accent-dk); }
 .badge-sms:hover {
     background-color: var(--color-accent);
     color: #fff;
+}
+
+/* Dvousloupcová mřížka karty:
+   vlevo SPZ/jméno/badge, vozidlo, text požadavku
+   vpravo poznámka technika (+ stáří a datum na kraji), plánovač
+   (pevné sloupce = poznámka a plánovač mají vždy stejný levý okraj) */
+.card-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 1rem;
+    row-gap: 0.25rem;
+    align-items: start;
+}
+.card-grid > div { min-width: 0; }
+
+.card-note {
+    color: var(--bs-body-color);
+}
+
+/* Objednávka do servisu (spodní řádek karty + modal) */
+.card-order {
+    color: #198754;
+    font-weight: 600;
 }
 
 /* Ikony úrovní */
@@ -336,6 +391,10 @@ a:hover { color: var(--color-accent-dk); }
     border-color: #373b40;
 }
 
+[data-bs-theme="dark"] .card-order {
+    color: #4ade80;
+}
+
 [data-bs-theme="dark"] .req-card {
     background: #1c1f23;
     border-color: #373b40;
@@ -369,6 +428,19 @@ a:hover { color: var(--color-accent-dk); }
     box-shadow: 0 1px 3px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.04);
 }
 
+[data-bs-theme="dark"] .badge-brand-renault {
+    background: #c9a010;
+    color: #0d0900;
+}
+[data-bs-theme="dark"] .badge-brand-dacia {
+    background: #15305a;
+    color: #c8d8ef;
+}
+[data-bs-theme="dark"] .badge-brand-nissan {
+    background: #a01026;
+    color: #ffd0d8;
+}
+
 [data-bs-theme="dark"] .modal-header {
     background: #161a1d;
     border-bottom-color: #373b40;
@@ -395,6 +467,7 @@ a:hover { color: var(--color-accent-dk); }
 /* ── Responsivita ────────────────────────────────────────────── */
 @media (max-width: 768px) {
     .req-card { margin-bottom: 0.4rem; }
+    .card-grid { grid-template-columns: 1fr; }
     .req-toolbar { gap: 0.4rem; }
     .modal-dialog { margin: 0; max-width: 100%; }
     .modal-dialog .modal-content { border-radius: 0; min-height: 100vh; }

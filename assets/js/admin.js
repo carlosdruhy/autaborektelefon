@@ -46,6 +46,35 @@ function showPageAlert(type, msg) {
 function initUsersPage() {
     loadUsers();
 
+    document.getElementById('saveEditUserBtn')?.addEventListener('click', async () => {
+        const form    = document.getElementById('editUserForm');
+        const alertEl = document.getElementById('editUserAlert');
+        const data = {
+            id:    parseInt(form.querySelector('[name=id]').value, 10),
+            name:  form.querySelector('[name=name]').value.trim(),
+            email: form.querySelector('[name=email]').value.trim(),
+        };
+
+        if (!data.name || !data.email) {
+            showModalAlert(alertEl, 'danger', 'Vyplňte jméno a e-mail.');
+            return;
+        }
+
+        const btn = document.getElementById('saveEditUserBtn');
+        btn.disabled = true;
+
+        const result = await adminPost(API + '?action=update', data);
+        btn.disabled = false;
+
+        if (result.success) {
+            bootstrap.Modal.getInstance(document.getElementById('editUserModal'))?.hide();
+            showPageAlert('success', 'Údaje uživatele byly uloženy.');
+            loadUsers();
+        } else {
+            showModalAlert(alertEl, 'danger', esc(result.error || 'Chyba'));
+        }
+    });
+
     document.getElementById('saveNewUserBtn')?.addEventListener('click', async () => {
         const form   = document.getElementById('newUserForm');
         const alertEl = document.getElementById('newUserAlert');
@@ -110,6 +139,11 @@ async function loadUsers() {
     </td>
     <td class="text-muted small">${esc(u.last_login_local || '—')}</td>
     <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-primary me-1"
+                data-id="${u.id}" data-name="${esc(u.name)}" data-email="${esc(u.email)}"
+                onclick="openEditUser(this.dataset.id, this.dataset.name, this.dataset.email)">
+            Upravit
+        </button>
         <button class="btn btn-sm ${u.is_active ? 'btn-outline-warning' : 'btn-outline-success'} me-1"
                 onclick="toggleUser(${u.id}, ${u.is_active})">
             ${u.is_active ? 'Blokovat' : 'Odblokovat'}
@@ -122,6 +156,15 @@ async function loadUsers() {
         </button>` : ''}
     </td>
 </tr>`).join('');
+}
+
+function openEditUser(id, name, email) {
+    const form = document.getElementById('editUserForm');
+    form.querySelector('[name=id]').value = id;
+    form.querySelector('[name=name]').value = name;
+    form.querySelector('[name=email]').value = email;
+    document.getElementById('editUserAlert').classList.add('d-none');
+    new bootstrap.Modal(document.getElementById('editUserModal')).show();
 }
 
 async function toggleUser(id, isActive) {
@@ -175,17 +218,22 @@ async function loadStatsByTechnician() {
     }
 
     if (!res.data.length) {
-        tbody.innerHTML = '<tr><td colspan="4" class="text-muted text-center">Žádná data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center">Žádná data</td></tr>';
         return;
     }
 
-    tbody.innerHTML = res.data.map(r => `
+    const grandTotal = res.data.reduce((sum, r) => sum + Number(r.total_resolved), 0);
+    tbody.innerHTML = res.data.map(r => {
+        const pct = grandTotal > 0 ? Math.round(Number(r.total_resolved) / grandTotal * 100) : 0;
+        return `
 <tr>
     <td>${esc(r.name)}</td>
     <td class="text-end">${r.total_resolved}</td>
+    <td class="text-end">${pct} %</td>
     <td class="text-end">${r.avg_minutes !== null ? r.avg_minutes : '—'}</td>
     <td class="text-end">${r.reopened_count}</td>
-</tr>`).join('');
+</tr>`;
+    }).join('');
 }
 
 async function loadStatsByAge() {
@@ -196,18 +244,23 @@ async function loadStatsByAge() {
     const res = await adminGet(url);
 
     if (!res.success) {
-        tbody.innerHTML = `<tr><td colspan="2" class="text-danger">${esc(res.error)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="3" class="text-danger">${esc(res.error)}</td></tr>`;
         return;
     }
 
     if (!res.data.length) {
-        tbody.innerHTML = '<tr><td colspan="2" class="text-muted text-center">Žádná data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="3" class="text-muted text-center">Žádná data</td></tr>';
         return;
     }
 
-    tbody.innerHTML = res.data.map(r => `
+    const grandTotal = res.data.reduce((sum, r) => sum + Number(r.count), 0);
+    tbody.innerHTML = res.data.map(r => {
+        const pct = grandTotal > 0 ? Math.round(Number(r.count) / grandTotal * 100) : 0;
+        return `
 <tr>
     <td>${esc(r.label)}</td>
     <td class="text-end fw-semibold">${r.count}</td>
-</tr>`).join('');
+    <td class="text-end text-muted">${pct} %</td>
+</tr>`;
+    }).join('');
 }

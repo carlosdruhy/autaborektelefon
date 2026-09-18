@@ -107,6 +107,9 @@ function updateCountdownUI() {
 let knownRequestIds = new Set();
 let allRequests     = [];
 
+const PAGE_SIZE = APP.pageSize > 0 ? APP.pageSize : 50;
+let currentPage = 1;
+
 async function loadRequests() {
     const search = document.getElementById('searchInput')?.value.trim() || '';
     const params = new URLSearchParams({
@@ -134,9 +137,16 @@ function renderRequestList(requests) {
     const countEl   = document.getElementById('resultCount');
     if (!container) return;
 
+    const totalPages = Math.max(1, Math.ceil(requests.length / PAGE_SIZE));
+    currentPage = Math.min(Math.max(1, currentPage), totalPages);
+    const start     = (currentPage - 1) * PAGE_SIZE;
+    const pageItems = requests.slice(start, start + PAGE_SIZE);
+
     if (countEl) {
         countEl.textContent = requests.length
-            ? `Zobrazeno: ${requests.length} požadavků`
+            ? (requests.length > PAGE_SIZE
+                ? `Zobrazeno: ${start + 1}–${start + pageItems.length} z ${requests.length} požadavků`
+                : `Zobrazeno: ${requests.length} požadavků`)
             : '';
     }
 
@@ -145,19 +155,81 @@ function renderRequestList(requests) {
         return;
     }
 
-    container.innerHTML = requests.map(createRequestCard).join('');
+    container.innerHTML = pageItems.map(createRequestCard).join('') + createPagination(totalPages);
 
     container.querySelectorAll('.req-card').forEach(card => {
         card.addEventListener('click', () => {
             openRequestModal(parseInt(card.dataset.id, 10));
         });
     });
+
+    container.querySelectorAll('[data-page]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            currentPage = parseInt(btn.dataset.page, 10);
+            renderRequestList(allRequests);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        });
+    });
+}
+
+function createPagination(totalPages) {
+    if (totalPages <= 1) return '';
+
+    let items = '';
+    for (let p = 1; p <= totalPages; p++) {
+        items += `<li class="page-item${p === currentPage ? ' active' : ''}">
+            <button type="button" class="page-link" data-page="${p}">${p}</button></li>`;
+    }
+
+    return `
+<nav class="mt-3 d-flex justify-content-center" aria-label="Stránkování požadavků">
+    <ul class="pagination pagination-sm mb-0">
+        <li class="page-item${currentPage === 1 ? ' disabled' : ''}">
+            <button type="button" class="page-link" data-page="${currentPage - 1}" aria-label="Předchozí">&lsaquo;</button></li>
+        ${items}
+        <li class="page-item${currentPage === totalPages ? ' disabled' : ''}">
+            <button type="button" class="page-link" data-page="${currentPage + 1}" aria-label="Další">&rsaquo;</button></li>
+    </ul>
+</nav>`;
+}
+
+function brandBadge(brand) {
+    if (!brand) return '';
+    const slug = brand.toLowerCase();
+    const BRANDED = ['renault', 'dacia', 'nissan'];
+    const cls = BRANDED.includes(slug) ? `badge-brand-${slug}` : 'badge-brand-other';
+    const icon = slug === 'renault' ? '◆ ' : slug === 'nissan' ? '● ' : '';
+    return `<span class="badge-brand ${cls}">${icon}${esc(brand)}</span>`;
+}
+
+function serviceOrdersLabel(req) {
+    const orders = Array.isArray(req.service_orders) ? req.service_orders : [];
+    if (orders.length === 0) return '';
+    return orders
+        .map(o => esc(o.scheduled_at_local)
+            + (o.client_name ? ` (${esc(o.client_name)})` : '')
+            + (o.source === 'prijem' ? ' – příjem' : ''))
+        .join(' · ');
 }
 
 function createRequestCard(req) {
-    const level    = getAgeLevel(req.age_minutes);
+    const level    = (req.status === 'resolved' && req.resolution_minutes != null)
+        ? getAgeLevel(req.resolution_minutes)
+        : getAgeLevel(req.age_minutes);
     const levelIcon = ['●', '◆', '▲', '✖', '⚠'][level - 1];
     const isNew    = !knownRequestIds.has(req.id) && knownRequestIds.size > 0;
+
+    let vehicleInfo = '';
+    if (req.vehicle_brand || req.vehicle_model || req.vehicle_year || req.vehicle_vin) {
+        const parts = [];
+        if (req.vehicle_model) parts.push(esc(req.vehicle_model));
+        if (req.vehicle_year)  parts.push(String(req.vehicle_year));
+        if (req.vehicle_vin)   parts.push('VIN ' + esc(req.vehicle_vin));
+        const badge = brandBadge(req.vehicle_brand);
+        vehicleInfo = (badge ? badge + ' ' : '') + parts.join(' · ');
+    }
+
+    const ordersLabel = serviceOrdersLabel(req);
 
     let badges = '';
     if (req.deleted_at) {
@@ -172,16 +244,26 @@ function createRequestCard(req) {
     if (req.status === 'pending') {
         badges += `<span class="badge-pending ms-1"><i class="bi bi-clock"></i> Čeká</span>`;
     }
-    if (req.assigned_to_name && req.status === 'in_progress') {
-        badges += `<span class="badge-technician ms-1"><i class="bi bi-person-fill"></i> Řeší: ${esc(req.assigned_to_name)}</span>`;
+    if (req.assigned_to_name) {
+        const techLabel = req.status === 'resolved'
+            ? `Vyřešil: ${esc(req.assigned_to_name)}`
+            : req.status === 'pending'
+            ? `Čeká s: ${esc(req.assigned_to_name)}`
+            : `Řeší: ${esc(req.assigned_to_name)}`;
+        badges += `<span class="badge-technician ms-1"><i class="bi bi-person-fill"></i> ${techLabel}</span>`;
     }
     if (req.sms_count > 0) {
-        badges += `<button class="badge-sms ms-1" onclick="event.stopPropagation();openSmsHistoryModal(${req.id},false)"><i class="bi bi-chat-dots"></i> ${req.sms_count} SMS</button>`;
+        const smsSent  = Number(req.sms_sent);
+        const smsTotal = Number(req.sms_count);
+        const smsLabel = smsSent < smsTotal
+            ? `${smsSent}/${smsTotal} SMS`
+            : `${smsTotal} SMS`;
+        badges += `<button class="badge-sms ms-1" onclick="event.stopPropagation();openSmsHistoryModal(${req.id},false)"><i class="bi bi-chat-dots"></i> ${smsLabel}</button>`;
     }
 
     return `
 <div class="req-card level-${level}${isNew ? ' req-card-new' : ''}" data-id="${req.id}">
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-1">
+    <div class="card-grid">
         <div class="d-flex align-items-center gap-2 flex-wrap">
             <span class="level-icon">${levelIcon}</span>
             <span class="badge-spz">${esc(req.spz)}</span>
@@ -190,11 +272,20 @@ function createRequestCard(req) {
             ${badges}
         </div>
         <div class="d-flex align-items-center gap-2">
-            <span class="badge-age"><i class="bi bi-clock"></i> ${formatAge(req.age_minutes)}</span>
-            <small class="text-muted">${esc(req.created_at_local || '')}</small>
+            ${req.technician_note ? `<span class="text-truncate card-note small" style="min-width:0" title="${esc(req.technician_note)}"><i class="bi bi-wrench-adjustable text-muted"></i> ${esc(req.technician_note)}</span>` : ''}
+            <span class="ms-auto d-flex align-items-center gap-2 flex-shrink-0">
+                ${req.status === 'resolved' && req.resolution_minutes != null
+                    ? `<span class="badge-age"><i class="bi bi-check2-circle"></i> ${formatAge(req.resolution_minutes)}</span>`
+                    : `<span class="badge-age"><i class="bi bi-clock"></i> ${formatAge(req.age_minutes)}</span>`}
+                <small class="text-muted">${esc(req.created_at_local || '')}</small>
+            </span>
         </div>
+        ${vehicleInfo ? `
+        <div class="text-truncate text-muted small">${req.vehicle_brand ? '' : '<i class="bi bi-car-front"></i> '}${vehicleInfo}</div>
+        <div></div>` : ''}
+        <div class="text-truncate text-muted small">${esc(req.request_text)}</div>
+        <div class="text-truncate card-order small">${ordersLabel ? `<i class="bi bi-calendar-check"></i> Plánovač: ${ordersLabel}` : ''}</div>
     </div>
-    <div class="mt-1 text-truncate text-muted small" style="max-width:100%">${esc(req.request_text)}</div>
 </div>`;
 }
 
@@ -436,9 +527,22 @@ function renderModal(req) {
     document.getElementById('modalTitle').textContent =
         `Požadavek #${req.id} — ${req.spz}`;
 
+    const vParts = [];
+    if (req.vehicle_model) vParts.push(esc(req.vehicle_model));
+    if (req.vehicle_year)  vParts.push(String(req.vehicle_year));
+    if (req.vehicle_vin)   vParts.push('VIN ' + esc(req.vehicle_vin));
+    const vBadge = brandBadge(req.vehicle_brand);
+    const vehicleRow = (vBadge || vParts.length)
+        ? `<div class="mb-3 p-2 rounded border small"><i class="bi bi-car-front me-1 text-muted"></i>${vBadge ? vBadge + ' ' : ''}${vParts.join(' · ')}</div>`
+        : '';
+    const modalOrders = serviceOrdersLabel(req);
+    const ordersRow = modalOrders
+        ? `<div class="mb-3 p-2 rounded border small card-order"><i class="bi bi-calendar-check me-1"></i>Objednáno do servisu: ${modalOrders}</div>`
+        : '';
+
     document.getElementById('modalBody').innerHTML = `
 <div class="row g-3 mb-3">
-    <div class="col-sm-6">
+    <div class="col-sm-6" id="contactSection">
         <table class="table table-sm table-borderless mb-0">
             <tr><th class="text-muted fw-normal ps-0" style="width:35%">SPZ</th>
                 <td><strong class="badge-spz">${esc(req.spz)}</strong></td></tr>
@@ -454,8 +558,8 @@ function renderModal(req) {
         <table class="table table-sm table-borderless mb-0">
             <tr><th class="text-muted fw-normal ps-0" style="width:45%">Stav</th>
                 <td>${statusLabels[req.status] || req.status}</td></tr>
-            <tr><th class="text-muted fw-normal ps-0">Stáří</th>
-                <td>${formatAge(req.age_minutes)}</td></tr>
+            <tr><th class="text-muted fw-normal ps-0">${req.status === 'resolved' && req.resolution_minutes != null ? 'Vyřízeno za' : 'Stáří'}</th>
+                <td>${req.status === 'resolved' && req.resolution_minutes != null ? formatAge(req.resolution_minutes) : formatAge(req.age_minutes)}</td></tr>
             <tr><th class="text-muted fw-normal ps-0">Přijato</th>
                 <td>${esc(req.created_at_local || '')}</td></tr>
             <tr><th class="text-muted fw-normal ps-0">Řeší</th>
@@ -465,6 +569,9 @@ function renderModal(req) {
         </table>
     </div>
 </div>
+
+${vehicleRow}
+${ordersRow}
 
 <div class="mb-3">
     <label class="form-label fw-semibold">Požadavek</label>
@@ -633,6 +740,11 @@ function renderModalActions(req, draft) {
         addBtn('Odeslat SMS', 'btn-outline-info', () => openSmsModal(req));
     }
 
+    // Upravit kontakt (všichni, pokud není vyřízeno)
+    if (req.status !== 'resolved') {
+        addBtn('Upravit kontakt', 'btn-outline-secondary', () => openContactEdit(req));
+    }
+
     // Soft-delete (jen admin)
     if (isAdmin && req.status !== 'new') {
         addBtn('Smazat (skrýt)', 'btn-outline-danger ms-auto', () => {
@@ -645,6 +757,73 @@ function renderModalActions(req, draft) {
 /* ═══════════════════════════════════════════════════════════════
    G. Akce z modálu
 ═══════════════════════════════════════════════════════════════ */
+
+function openContactEdit(req) {
+    const section = document.getElementById('contactSection');
+    if (!section) return;
+
+    section.innerHTML = `
+<div class="p-2 border rounded">
+    <div class="mb-2">
+        <label class="form-label form-label-sm fw-semibold mb-1">Jméno <span class="text-danger">*</span></label>
+        <input type="text" id="editContactName" class="form-control form-control-sm" value="${esc(req.client_name || '')}">
+    </div>
+    <div class="mb-2">
+        <label class="form-label form-label-sm fw-semibold mb-1">Telefon</label>
+        <input type="tel" id="editContactPhone" class="form-control form-control-sm" value="${esc(req.client_phone || '')}">
+    </div>
+    <div class="mb-0">
+        <label class="form-label form-label-sm fw-semibold mb-1">E-mail</label>
+        <input type="email" id="editContactEmail" class="form-control form-control-sm" value="${esc(req.client_email || '')}">
+    </div>
+</div>`;
+
+    const footer = document.getElementById('modalFooter');
+    footer.innerHTML = '';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-secondary';
+    cancelBtn.textContent = 'Zrušit';
+    cancelBtn.onclick = () => openRequestModal(currentRequestId);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Uložit';
+    saveBtn.onclick = async () => {
+        const name  = document.getElementById('editContactName').value.trim();
+        const phone = document.getElementById('editContactPhone').value.trim();
+        const email = document.getElementById('editContactEmail').value.trim();
+        if (!name) { alert('Jméno nesmí být prázdné.'); return; }
+        saveBtn.disabled = true;
+        saveBtn.textContent = 'Ukládám…';
+        try {
+            const result = await apiPost('/requests.php?action=update', {
+                id: currentRequestId,
+                expected_updated_at: expectedUpdatedAt,
+                action_type: 'edit_contact',
+                client_name: name,
+                client_phone: phone,
+                client_email: email,
+            });
+            if (!result.success) {
+                alert(result.error || 'Chyba při ukládání.');
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Uložit';
+                return;
+            }
+            openRequestModal(currentRequestId);
+        } catch (e) {
+            alert('Chyba připojení k serveru.');
+            saveBtn.disabled = false;
+            saveBtn.textContent = 'Uložit';
+        }
+    };
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(saveBtn);
+}
 
 async function submitAction(actionType, payload) {
     const body = {
@@ -689,17 +868,63 @@ function initNewRequestForm() {
     const modalEl = document.getElementById('newRequestModal');
     if (!form || !modalEl) return;
 
+    const spzInput    = form.querySelector('[name="spz"]');
+    const vehicleHint = document.getElementById('spzVehicleHint');
+
+    function clearVehicleHint() {
+        if (!vehicleHint) return;
+        vehicleHint.classList.add('d-none');
+        vehicleHint.innerHTML = '';
+    }
+
     // Vyčistit formulář při otevření modálu
     modalEl.addEventListener('show.bs.modal', () => {
         form.reset();
         document.getElementById('charCount').textContent = '0';
         alertEl.classList.add('d-none');
+        clearVehicleHint();
     });
 
     // Fokus na první pole po otevření
     modalEl.addEventListener('shown.bs.modal', () => {
         form.querySelector('[name="spz"]')?.focus();
     });
+
+    // Lookup vozidla po vyplnění SPZ
+    if (spzInput && vehicleHint) {
+        spzInput.addEventListener('blur', async () => {
+            const spz = spzInput.value.trim().toUpperCase().replace(/[\s\-]/g, '');
+            if (!spz) { clearVehicleHint(); return; }
+
+            vehicleHint.classList.remove('d-none');
+            vehicleHint.innerHTML =
+                '<div class="small text-muted d-flex align-items-center gap-1">' +
+                '<span class="spinner-border spinner-border-sm"></span> Hledám vozidlo…</div>';
+
+            try {
+                const res = await apiGet(`/requests.php?action=vehicle_lookup&spz=${encodeURIComponent(spz)}`);
+                if (!res.success) { clearVehicleHint(); return; }
+
+                if (res.data.found) {
+                    const d = res.data;
+                    const parts = [];
+                    if (d.model) parts.push(esc(d.model));
+                    if (d.year)  parts.push(String(d.year));
+                    const vinPart = d.vin ? `<span class="text-muted ms-1">VIN ${esc(d.vin)}</span>` : '';
+                    const badge   = d.brand ? brandBadge(d.brand) + ' ' : '';
+                    vehicleHint.innerHTML =
+                        `<div class="d-flex align-items-center gap-2 p-2 rounded border border-success-subtle bg-success-subtle small">` +
+                        `<i class="bi bi-car-front text-success"></i>` +
+                        `<span>${badge}${esc(parts.join(' · '))}${vinPart}</span></div>`;
+                } else {
+                    vehicleHint.innerHTML =
+                        `<div class="d-flex align-items-center gap-2 p-2 rounded border border-warning-subtle bg-warning-subtle small text-warning-emphasis">` +
+                        `<i class="bi bi-exclamation-triangle-fill"></i>` +
+                        `<span>Vozidlo s touto SPZ není v databázi.</span></div>`;
+                }
+            } catch (_) { clearVehicleHint(); }
+        });
+    }
 
     form.addEventListener('submit', async e => {
         e.preventDefault();
@@ -845,6 +1070,7 @@ function initFilterSort() {
             btn.classList.add('active');
             currentFilter = btn.dataset.filter;
             savePreference(KEYS.FILTER, currentFilter);
+            currentPage = 1;
             loadRequests();
         });
     });
@@ -853,13 +1079,17 @@ function initFilterSort() {
         currentSort = currentSort === 'asc' ? 'desc' : 'asc';
         savePreference(KEYS.SORT, currentSort);
         updateSortIcon();
+        currentPage = 1;
         loadRequests();
     });
 
     let searchTimer = null;
     document.getElementById('searchInput')?.addEventListener('input', () => {
         clearTimeout(searchTimer);
-        searchTimer = setTimeout(loadRequests, 300);
+        searchTimer = setTimeout(() => {
+            currentPage = 1;
+            loadRequests();
+        }, 300);
     });
 }
 

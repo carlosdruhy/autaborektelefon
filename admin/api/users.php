@@ -28,6 +28,10 @@ switch ($action) {
         if ($method !== 'POST') jsonErr('Metoda není povolena', 405);
         verifyCsrf();
         handleToggleReopen();
+    case 'update':
+        if ($method !== 'POST') jsonErr('Metoda není povolena', 405);
+        verifyCsrf();
+        handleUpdate();
     default:
         jsonErr('Neznámá akce', 400);
 }
@@ -108,6 +112,33 @@ function handleToggleReopen(): never
        ->execute([$newState, $id]);
 
     jsonOk(['id' => $id, 'can_reopen' => $newState]);
+}
+
+function handleUpdate(): never
+{
+    $body  = getPostedJson();
+    $id    = arrInt($body, 'id');
+    $name  = trim(arrStr($body, 'name'));
+    $email = trim(arrStr($body, 'email'));
+
+    if ($id <= 0) jsonErr('Chybí ID');
+    if ($name === '') jsonErr('Jméno je povinné');
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) jsonErr('Neplatný e-mail');
+
+    $db = getDB();
+
+    $stmt = $db->prepare('SELECT id FROM tel_users WHERE id = ?');
+    $stmt->execute([$id]);
+    if (!pdoFetch($stmt)) jsonErr('Uživatel nenalezen', 404);
+
+    $check = $db->prepare('SELECT id FROM tel_users WHERE email = ? AND id != ?');
+    $check->execute([$email, $id]);
+    if (pdoFetch($check)) jsonErr('Uživatel s tímto e-mailem již existuje');
+
+    $db->prepare('UPDATE tel_users SET name = ?, email = ? WHERE id = ?')
+       ->execute([$name, $email, $id]);
+
+    jsonOk(['id' => $id]);
 }
 
 function handleToggleActive(): never

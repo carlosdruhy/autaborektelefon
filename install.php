@@ -170,12 +170,30 @@ CREATE TABLE IF NOT EXISTS `tel_rate_limits` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tel_vehicles` (
-  `spz_normalized` VARCHAR(20)  NOT NULL,
-  `spz_original`   VARCHAR(20)  NOT NULL,
-  `vin`            VARCHAR(17)  DEFAULT NULL,
-  `model`          VARCHAR(100) DEFAULT NULL,
-  `updated_at`     DATETIME     NOT NULL,
+  `spz_normalized` VARCHAR(20)       NOT NULL,
+  `spz_original`   VARCHAR(20)       NOT NULL,
+  `external_id`    INT UNSIGNED      DEFAULT NULL,
+  `model`          VARCHAR(100)      DEFAULT NULL,
+  `year`           SMALLINT UNSIGNED DEFAULT NULL,
+  `vin`            VARCHAR(17)       DEFAULT NULL,
+  `updated_at`     DATETIME          NOT NULL,
   PRIMARY KEY (`spz_normalized`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tel_service_orders` (
+  `id`             INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `source`         VARCHAR(20)  NOT NULL DEFAULT 'objednano',
+  `scheduled_at`   DATETIME     NOT NULL,
+  `spz_normalized` VARCHAR(20)  DEFAULT NULL,
+  `spz_original`   VARCHAR(20)  DEFAULT NULL,
+  `vin`            VARCHAR(17)  DEFAULT NULL,
+  `client_name`    VARCHAR(100) DEFAULT NULL,
+  `imported_at`    DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  INDEX `idx_so_spz`       (`spz_normalized`),
+  INDEX `idx_so_vin`       (`vin`),
+  INDEX `idx_so_scheduled` (`scheduled_at`),
+  INDEX `idx_so_source`    (`source`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 SQL;
 
@@ -195,7 +213,8 @@ function insertDefaultSettings(PDO $db): void
         ('color_level_2',    '30'),
         ('color_level_3',    '60'),
         ('color_level_4',    '120'),
-        ('session_timeout',  '500')");
+        ('session_timeout',  '500'),
+        ('page_size',        '50')");
 }
 
 function createAdminUser(PDO $db, string $name, string $email, string $password): void

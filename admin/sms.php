@@ -34,6 +34,8 @@ touchSession();
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
+        <a href="import-vehicles.php" class="btn btn-sm btn-outline-light">Vozidla</a>
+        <a href="orders.php" class="btn btn-sm btn-outline-light">Objednávky</a>
         <a href="../logout.php" class="btn btn-sm btn-outline-light">Odhlásit</a>
     </div>
 </nav>
@@ -66,6 +68,21 @@ touchSession();
     </div>
 </div>
 
+<!-- Modal: detail SMS -->
+<div class="modal fade" id="smsDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-chat-dots me-2"></i>Detail SMS</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <dl class="row mb-0" id="smsDetailBody"></dl>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 const CSRF    = '<?= h(arrStr($_SESSION, 'csrf_token')) ?>';
 const SMS_API = '<?= APP_URL ?>/api/sms.php';
@@ -91,20 +108,54 @@ const SMS_API = '<?= APP_URL ?>/api/sms.php';
         const esc = s => s == null ? '' : String(s)
             .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
-        tbody.innerHTML = json.data.map(r => `<tr>
-            <td>${r.request_id ? `<a href="../dashboard.php">#${r.request_id} ${esc(r.spz)}</a>` : '—'}</td>
-            <td>${esc(r.client_name)}</td>
-            <td>${esc(r.phone)}</td>
-            <td class="text-truncate" style="max-width:220px" title="${esc(r.message)}">${esc(r.message)}</td>
-            <td>${badge(r.status)}${r.error_msg ? `<br><small class="text-danger">${esc(r.error_msg)}</small>` : ''}</td>
-            <td>${esc(r.sent_by_name)}</td>
-            <td class="text-nowrap">${esc(r.created_at_local)}</td>
-            <td class="text-nowrap">${r.sent_at_local || '—'}</td>
-        </tr>`).join('');
+        const rows = json.data.map(r => {
+            const tr = document.createElement('tr');
+            tr.style.cursor = 'pointer';
+            tr.innerHTML = `
+                <td>${r.request_id ? `<a href="../dashboard.php" onclick="event.stopPropagation()">#${r.request_id} ${esc(r.spz)}</a>` : '—'}</td>
+                <td>${esc(r.client_name)}</td>
+                <td>${esc(r.phone)}</td>
+                <td class="text-truncate" style="max-width:180px">${esc(r.message)}</td>
+                <td>${badge(r.status)}${r.error_msg ? `<br><small class="text-danger">${esc(r.error_msg)}</small>` : ''}</td>
+                <td>${esc(r.sent_by_name)}</td>
+                <td class="text-nowrap">${esc(r.created_at_local)}</td>
+                <td class="text-nowrap">${r.sent_at_local || '—'}</td>`;
+            tr.addEventListener('click', () => openSmsDetail(r));
+            return tr;
+        });
+        tbody.replaceChildren(...rows);
     } catch (e) {
         tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger py-3">Chyba načítání.</td></tr>';
     }
 })();
+
+const smsModal     = new bootstrap.Modal(document.getElementById('smsDetailModal'));
+const smsDetailBody = document.getElementById('smsDetailBody');
+
+function openSmsDetail(r) {
+    const esc = s => s == null ? '' : String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const badge = s => {
+        if (s === 'sent')   return '<span class="badge bg-success">Odesláno</span>';
+        if (s === 'failed') return '<span class="badge bg-danger">Chyba</span>';
+        return '<span class="badge bg-secondary">Čeká</span>';
+    };
+    const row = (label, val) => `<dt class="col-sm-4 text-muted">${label}</dt><dd class="col-sm-8">${val}</dd>`;
+
+    smsDetailBody.innerHTML = [
+        r.request_id ? row('Požadavek', `<a href="../dashboard.php">#${r.request_id} ${esc(r.spz)}</a>`) : '',
+        row('Klient',      esc(r.client_name) || '—'),
+        row('Telefon',     esc(r.phone) || '—'),
+        row('Stav',        badge(r.status) + (r.error_msg ? ` <small class="text-danger">${esc(r.error_msg)}</small>` : '')),
+        row('Odesílatel',  esc(r.sent_by_name) || '—'),
+        row('Vytvořeno',   esc(r.created_at_local) || '—'),
+        row('Odesláno',    esc(r.sent_at_local) || '—'),
+        `<dt class="col-12 text-muted mt-2">Text zprávy</dt>
+         <dd class="col-12"><div class="p-2 bg-light rounded border" style="white-space:pre-wrap;word-break:break-word">${esc(r.message)}</div></dd>`,
+    ].join('');
+
+    smsModal.show();
+}
 </script>
 </body>
 </html>

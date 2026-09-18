@@ -45,12 +45,15 @@ Test layout:
 │   ├── requests.php   # CRUD + 8 actions for requests
 │   ├── sms.php        # SMS queue (enqueue, list, bridge pull/confirm)
 │   ├── settings.php   # Read app settings as JSON
+│   ├── sync-vehicles.php # Cron (?key=): S3 export-spz.csv → tel_vehicles (upsert) + planovac-objednano.csv & planovac-prijem.csv → tel_service_orders (snapshot per source)
 │   └── stats.php      # Stats by technician and by age
 ├── admin/             # Admin-only HTML pages
 │   ├── api/users.php  # User management API
 │   ├── users.php      # User management UI
 │   ├── stats.php      # Statistics UI
 │   ├── sms.php        # All-SMS overview (admin)
+│   ├── import-vehicles.php # Vehicle sync UI + locked S3 settings (shared by vehicles & orders)
+│   ├── orders.php     # Service orders sync UI + upcoming orders preview
 │   └── settings.php   # System settings + TRB140 + GDPR anonymisation
 ├── assets/
 │   ├── css/style.css  # All custom CSS (Bootstrap 5 overrides + components)
@@ -108,6 +111,12 @@ Each transition is a POST to `api/requests.php?action=<action>` with `expected_u
 - Dark mode: Bootstrap 5.3 `data-bs-theme="dark"` on `<html>`, toggled by `initDarkMode()`, stored in `AB_TEL_THEME`. An inline `<script>` in `<head>` applies the theme before CSS loads (prevents flash)
 - Keyboard shortcuts: `N` = nový požadavek, `/` = hledání, `?` = nápověda — implemented in `initKeyboardShortcuts()`; ignored when focus is in INPUT/TEXTAREA/SELECT
 
+### S3 CSV synchronizace (vozidla + objednávky)
+- Shared S3 credentials (`s3_region`, `s3_bucket`, `s3_access_key_id`, `s3_secret_access_key`) and one cron key (`vehicles_sync_key`) in `tel_settings`; edited only on `admin/import-vehicles.php` behind the e-mail OTP lock
+- Vehicles: `s3_object_key` → `importVehiclesCsv()` (upsert by SPZ). Orders: the `SERVICE_ORDER_FILES` constant maps each source (`objednano`, `prijem`) to its settings keys (`s3_orders_object_key` / `s3_prijem_object_key`, ETag, last-modified); `importServiceOrdersCsv($db, $path, $source)` does DELETE WHERE source + INSERT in one transaction and refuses files whose header isn't `datum_zac`. ~70 % of rows are identical in both files, so `matchServiceOrders()` de-duplicates by (scheduled_at, spz, vin) for the dashboard, preferring `objednano`
+- One cron endpoint `api/sync-vehicles.php` runs both syncs; the whole fetch → import → settings → log flow lives in `syncVehiclesFromS3()` / `syncServiceOrdersFromS3()` (built on `fetchAndImportS3Csv()`), which the admin "Synchronizovat" buttons call with `source='manual'` (forces download, ignores ETag). Cron skips the download when the S3 ETag is unchanged (`s3_last_etag` / `s3_orders_last_etag`); results go to JSON logs via `appendSettingLog()` (`vehicles_sync_log`, `orders_sync_log`, `db_backup_log`)
+- Source CSVs are Windows-1250, `;`-separated, values padded with spaces — always `trim()`
+
 ### SMS subsystem
 - `api/sms.php` has two auth modes: session (enqueue + list) and API-key (bridge pull/confirm)
 - Local PC bridge (`sms-bridge.ps1`) polls `?action=pending`, calls TRB140 HTTP API, then posts results to `?action=confirm`
@@ -136,6 +145,7 @@ All CSS/JS links use `assetUrl('assets/css/style.css')` (defined in `includes/fu
 | `tel_rate_limits` | Login/reset brute-force protection with exponential backoff |
 | `tel_vehicles` | Optional vehicle metadata keyed by normalised SPZ |
 | `tel_sms_queue` | Outbound SMS queue (`pending` / `sent` / `failed`) — created by `migrate-sms.sql` |
+| `tel_service_orders` | Scheduled service appointments from two S3 files with identical structure: `planovac-objednano.csv` (`source='objednano'`) and `planovac-prijem.csv` (`source='prijem'`). `vin` = `fabkod` + `vinkod`; `scheduled_at` UTC; each import replaces only the rows of its own `source`. Created by `_local/migrate-service-orders.sql` + `migrate-service-orders-prijem.sql` |
 
 ## Typed helper functions (PHPStan level 9)
 

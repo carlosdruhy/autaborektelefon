@@ -30,6 +30,8 @@ switch ($action) {
         }
         verifyCsrf();
         handleUpdate();
+    case 'vehicle_lookup':
+        handleVehicleLookup();
     default:
         jsonErr('Neznámá akce', 400);
 }
@@ -57,6 +59,9 @@ function handleList(): never
             if ($statusFilter === 'mine') {
                 $where[]  = 'r.assigned_to_id = ?';
                 $params[] = currentUserId();
+            } elseif ($statusFilter === 'new_and_mine') {
+                $where[]  = "(r.status = 'new' OR (r.assigned_to_id = ? AND r.status != 'resolved'))";
+                $params[] = currentUserId();
             } else {
                 $where[]  = 'r.status = ?';
                 $params[] = $statusFilter;
@@ -78,34 +83,52 @@ function handleList(): never
     $whereStr = implode(' AND ', $where);
     $sql = "SELECT r.*,
                    COALESCE(s.sms_count, 0) AS sms_count,
+                   COALESCE(s.sms_sent,  0) AS sms_sent,
                    u1.name AS created_by_name,
-                   u2.name AS assigned_to_name
+                   u2.name AS assigned_to_name,
+                   v.model AS vehicle_model,
+                   v.year  AS vehicle_year,
+                   v.vin   AS vehicle_vin
             FROM tel_requests r
             LEFT JOIN (
-                SELECT request_id, COUNT(*) AS sms_count
+                SELECT request_id,
+                       COUNT(*) AS sms_count,
+                       SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sms_sent
                 FROM tel_sms_queue GROUP BY request_id
             ) s ON s.request_id = r.id
             LEFT JOIN tel_users u1 ON r.created_by     = u1.id
             LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
+            LEFT JOIN tel_vehicles v ON v.spz_normalized = r.spz
             WHERE $whereStr
             ORDER BY r.created_at $sort";
 
     $stmt = $db->prepare($sql);
     $stmt->execute($params);
-    $rows = $stmt->fetchAll();
+    $rows = pdoFetchAll($stmt);
+
+    $orders = getUpcomingServiceOrders(
+        $db,
+        array_map(static fn (array $r): string => arrStr($r, 'spz'), $rows),
+        array_map(static fn (array $r): string => arrStr($r, 'vehicle_vin'), $rows)
+    );
 
     foreach ($rows as &$row) {
-        $row['age_minutes']  = ageMinutes($row['created_at']);
-        $row['created_at_local'] = toLocalTime($row['created_at']);
-        $row['updated_at_local'] = toLocalTime($row['updated_at']);
-        if ($row['resolved_at']) {
-            $row['resolved_at_local'] = toLocalTime($row['resolved_at']);
+        $row['age_minutes']  = ageMinutes(arrStr($row, 'created_at'));
+        $row['created_at_local'] = toLocalTime(arrStr($row, 'created_at'));
+        $row['updated_at_local'] = toLocalTime(arrStr($row, 'updated_at'));
+        foreach (['resolved_at', 'deleted_at', 'assigned_at'] as $field) {
+            $value = arrStrNull($row, $field);
+            if ($value !== null) {
+                $row[$field . '_local'] = toLocalTime($value);
+            }
         }
-        if ($row['deleted_at']) {
-            $row['deleted_at_local'] = toLocalTime($row['deleted_at']);
-        }
-        if ($row['assigned_at']) {
-            $row['assigned_at_local'] = toLocalTime($row['assigned_at']);
+        $row['vehicle_brand']  = vinToBrand(arrStr($row, 'vehicle_vin'));
+        $resolvedAt = arrStrNull($row, 'resolved_at');
+        $row['service_orders'] = matchServiceOrders($orders, arrStr($row, 'spz'), arrStr($row, 'vehicle_vin'), $resolvedAt);
+        if ($resolvedAt !== null) {
+            $row['resolution_minutes'] = (int) round(
+                (strtotime($resolvedAt) - strtotime(arrStr($row, 'created_at'))) / 60
+            );
         }
     }
     unset($row);
@@ -126,15 +149,22 @@ function handleGet(): never
     $stmt = $db->prepare(
         'SELECT r.*,
                 COALESCE(s.sms_count, 0) AS sms_count,
+                COALESCE(s.sms_sent,  0) AS sms_sent,
                 u1.name AS created_by_name,
-                u2.name AS assigned_to_name
+                u2.name AS assigned_to_name,
+                v.model AS vehicle_model,
+                v.year  AS vehicle_year,
+                v.vin   AS vehicle_vin
          FROM tel_requests r
          LEFT JOIN (
-             SELECT request_id, COUNT(*) AS sms_count
+             SELECT request_id,
+                    COUNT(*) AS sms_count,
+                    SUM(CASE WHEN status = \'sent\' THEN 1 ELSE 0 END) AS sms_sent
              FROM tel_sms_queue GROUP BY request_id
          ) s ON s.request_id = r.id
          LEFT JOIN tel_users u1 ON r.created_by     = u1.id
          LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
+         LEFT JOIN tel_vehicles v ON v.spz_normalized = r.spz
          WHERE r.id = ?
          LIMIT 1'
     );
@@ -159,6 +189,18 @@ function handleGet(): never
     $deletedAt = arrStrNull($row, 'deleted_at');
     if ($deletedAt !== null) {
         $row['deleted_at_local'] = toLocalTime($deletedAt);
+    }
+    $row['vehicle_brand']  = vinToBrand(arrStr($row, 'vehicle_vin'));
+    $row['service_orders'] = matchServiceOrders(
+        getUpcomingServiceOrders($db, [arrStr($row, 'spz')], [arrStr($row, 'vehicle_vin')]),
+        arrStr($row, 'spz'),
+        arrStr($row, 'vehicle_vin'),
+        $resolvedAt
+    );
+    if ($resolvedAt !== null) {
+        $row['resolution_minutes'] = (int) round(
+            (strtotime($resolvedAt) - strtotime(arrStr($row, 'created_at'))) / 60
+        );
     }
 
     // Historie (posledních 20)
@@ -315,6 +357,8 @@ function handleUpdate(): never
             handleReopen($db, $req, $userId, $now, $body);
         case 'edit_field':
             handleEditField($db, $req, $userId, $now, $body);
+        case 'edit_contact':
+            handleEditContact($db, $req, $userId, $now, $body);
         case 'soft_delete':
             handleSoftDelete($db, $req, $userId, $now);
         case 'restore':
@@ -607,6 +651,59 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
     jsonOk(['id' => $reqId]);
 }
 
+// ── edit_contact ──────────────────────────────────────────────────────────────
+
+/**
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
+function handleEditContact(PDO $db, array $req, int $userId, string $now, array $body): never
+{
+    if ($req['status'] === 'resolved') {
+        jsonErr('Kontaktní údaje nelze upravovat u vyřízených požadavků');
+    }
+
+    $name  = trim(arrStr($body, 'client_name'));
+    $phone = trim(arrStr($body, 'client_phone'));
+    $email = trim(arrStr($body, 'client_email'));
+
+    if ($name === '') {
+        jsonErr('Jméno klienta nesmí být prázdné');
+    }
+    if ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        jsonErr('Neplatný formát e-mailu');
+    }
+
+    $oldName  = arrStr($req, 'client_name');
+    $oldPhone = arrStr($req, 'client_phone');
+    $oldEmail = arrStr($req, 'client_email');
+
+    $reqId = arrInt($req, 'id');
+    $db->beginTransaction();
+    try {
+        $db->prepare(
+            'UPDATE tel_requests SET client_name = ?, client_phone = ?, client_email = ?, updated_at = ? WHERE id = ?'
+        )->execute([$name, $phone ?: null, $email ?: null, $now, $reqId]);
+
+        if ($name !== $oldName) {
+            logAudit($db, $reqId, $userId, 'field_edit', 'client_name', $oldName ?: null, $name);
+        }
+        if ($phone !== $oldPhone) {
+            logAudit($db, $reqId, $userId, 'field_edit', 'client_phone', $oldPhone ?: null, $phone ?: null);
+        }
+        if ($email !== $oldEmail) {
+            logAudit($db, $reqId, $userId, 'field_edit', 'client_email', $oldEmail ?: null, $email ?: null);
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        appLog('edit_contact error: ' . $e->getMessage());
+        jsonErr('Chyba při ukládání', 500);
+    }
+
+    jsonOk(['id' => $reqId]);
+}
+
 // ── soft_delete ───────────────────────────────────────────────────────────────
 
 /** @param array<string, mixed> $req */
@@ -661,4 +758,32 @@ function handleRestore(PDO $db, int $id, int $userId, string $now): never
     }
 
     jsonOk(['id' => $id]);
+}
+
+// ── vehicle_lookup ────────────────────────────────────────────────────────────
+
+function handleVehicleLookup(): never
+{
+    $spz = normalizeSpz(trim(arrStr($_GET, 'spz')));
+    if ($spz === '') {
+        jsonErr('Chybí SPZ', 400);
+    }
+    $db   = getDB();
+    $stmt = $db->prepare(
+        'SELECT model, year, vin FROM tel_vehicles WHERE spz_normalized = ? LIMIT 1'
+    );
+    $stmt->execute([$spz]);
+    $row = pdoFetch($stmt);
+    if (!$row) {
+        jsonOk(['found' => false]);
+    }
+    $vin     = arrStrNull($row, 'vin');
+    $yearStr = arrStrNull($row, 'year');
+    jsonOk([
+        'found' => true,
+        'model' => arrStrNull($row, 'model'),
+        'year'  => $yearStr !== null ? (int) $yearStr : null,
+        'vin'   => $vin,
+        'brand' => vinToBrand($vin ?? ''),
+    ]);
 }

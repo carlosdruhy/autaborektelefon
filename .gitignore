@@ -18,3 +18,8 @@
 # Systémové soubory
 Thumbs.db
 .DS_Store
+
+# Lokální skripty a data s přihlašovacími údaji / osobními daty
+/crony/
+/dataupload/
+/_local/trb-test.ps1

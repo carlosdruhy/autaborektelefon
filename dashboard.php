@@ -95,6 +95,7 @@ touchSession();
         <div class="btn-group btn-group-sm" role="group">
             <button class="btn btn-outline-secondary filter-btn active" data-filter="all">Vše</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="new">Nové</button>
+            <button class="btn btn-outline-secondary filter-btn" data-filter="new_and_mine">Nové + moje</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="in_progress">Převzaté</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="pending">Čekající</button>
             <button class="btn btn-outline-secondary filter-btn" data-filter="reopened">Znovuotevřené</button>
@@ -179,6 +180,7 @@ touchSession();
                                    maxlength="100" required autocomplete="off">
                         </div>
                     </div>
+                    <div id="spzVehicleHint" class="d-none mb-2"></div>
                     <div class="row g-2 mb-2">
                         <div class="col-sm-6">
                             <label class="form-label">Telefon</label>
@@ -233,6 +235,7 @@ const APP = {
     appName:         '<?= h(APP_NAME) ?>',
     csrfToken:       '<?= h(arrStr($_SESSION, 'csrf_token')) ?>',
     refreshInterval: <?= getSettingInt('refresh_interval', 30) ?>,
+    pageSize:        <?= getSettingInt('page_size', 50) ?>,
     sessionTimeout:  <?= getSettingInt('session_timeout', 500) ?>,
     colorThresholds: <?= json_encode([
         getSettingInt('color_level_1', 15),

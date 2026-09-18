@@ -39,6 +39,8 @@ touchSession();
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
+        <a href="import-vehicles.php" class="btn btn-sm btn-outline-light">Vozidla</a>
+        <a href="orders.php" class="btn btn-sm btn-outline-light">Objednávky</a>
         <a href="../logout.php" class="btn btn-sm btn-outline-light">Odhlásit</a>
     </div>
 </nav>
@@ -73,6 +75,36 @@ touchSession();
                     </td></tr>
                 </tbody>
             </table>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Upravit uživatele -->
+<div class="modal fade" id="editUserModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Upravit uživatele</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="editUserAlert" class="d-none"></div>
+                <form id="editUserForm" novalidate>
+                    <input type="hidden" name="id">
+                    <div class="mb-3">
+                        <label class="form-label">Jméno</label>
+                        <input type="text" class="form-control" name="name" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">E-mail</label>
+                        <input type="email" class="form-control" name="email" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Zrušit</button>
+                <button type="button" class="btn btn-primary" id="saveEditUserBtn">Uložit</button>
+            </div>
         </div>
     </div>
 </div>

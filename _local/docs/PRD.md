@@ -1,7 +1,7 @@
 # PRD – Evidenční systém telefonických požadavků AutoBorek
 
-**Verze:** 1.2  
-**Datum:** 2026-05-08  
+**Verze:** 1.6  
+**Datum:** 2026-07-03  
 **Adresa aplikace:** https://tel.auto-borek.cz  
 **Administrace:** https://tel.auto-borek.cz/admin/  
 **Technologie:** PHP 8+, MySQL, JavaScript, Bootstrap 5  
@@ -15,6 +15,10 @@
 | 1.0   | 2026-05-08 | Prvotní verze                                                                                           |
 | 1.1   | 2026-05-08 | Ownership ticketu, stav `in_progress`, audit log, pravidla editace, ochrana souběhu, vyhledávání, rate limiting, session timeout, GDPR, nefunkční požadavky |
 | 1.2   | 2026-05-08 | Lifecycle po resolved (stav `reopened`), soft delete, transakční pravidla, indexy, timezone UTC/Prague, rate limiting IP+email, bezpečnostní hlavičky, notifikace nových ticketů, filtr „Jen moje", potvrzení přebrání, omezení editace po uzavření, session keepalive + autosave, retenční politika audit logu |
+| 1.3   | 2026-06-25 | Lookup SPZ → model + rok + VIN implementován (přesun z v2.0); S3 synchronizace vozidel (SSIS → S3 → cron); dark mode, klávesové zkratky, cache-busting; admin: smazané záznamy + obnova; DB zálohy na S3 (`crony/backup-db.php`); nová admin stránka Evidence vozidel |
+| 1.4   | 2026-06-25 | Značka vozidla z VIN (WMI lookup); barevné brand badge pro Renault/Dacia/Nissan; u vyřízených požadavků zobrazení doby řešení místo stáří |
+| 1.5   | 2026-06-26 | Barevné rozlišení vyřízených požadavků podle doby řešení (ne stáří); lookup vozidla při zadávání nového požadavku (blur na SPZ); statistiky podle doby vyřízení doplněny o procentuální podíl |
+| 1.6   | 2026-07-03 | Editace jména a e-mailu uživatele v admin správě uživatelů |
 
 ---
 
@@ -104,7 +108,39 @@ Po každém automatickém obnovení systém vizuálně upozorní na nové a znov
 - **Zvuková notifikace** (volitelná, zapínatelná v localStorage — výchozí: vypnuto).
 - **Browser Notification** — systém si vyžádá oprávnění; upozorní při přijetí nového ticketu, pokud je záložka na pozadí.
 
-### 3.5 Barevné rozlišení a přístupnost (5 úrovní)
+### 3.5 Lookup SPZ → vozidlo a značka
+
+Po načtení přehledu i po otevření detailu se k požadavku automaticky doplní informace o vozidle z databáze `tel_vehicles`:
+
+- **Model**, **rok výroby** a **VIN** se zobrazí na kartě i v modálním okně.
+- Data se doplňují pomocí `LEFT JOIN tel_vehicles ON spz_normalized = r.spz` — pokud SPZ v databázi není, karta se zobrazí normálně bez dopadu.
+- Databáze vozidel se plní synchronizací ze S3 (viz sekce 4.7).
+
+**Lookup při zadávání nového požadavku:**
+
+- Po vyplnění SPZ a přechodu na pole Jméno klienta (blur) aplikace asynchronně volá `api/requests.php?action=vehicle_lookup&spz=…`.
+- **Nalezeno:** pod polem SPZ se zobrazí zelený box s brand badge, modelem, rokem a VIN.
+- **Nenalezeno:** zobrazí se výrazný žlutý warning box „Vozidlo s touto SPZ není v databázi."
+- Hint se při otevření formuláře vždy vymaže.
+
+**Značka z VIN (WMI lookup):**
+
+- PHP funkce `vinToBrand()` odvozuje značku z prvních 3 znaků VIN (WMI — World Manufacturer Identifier).
+- Pokrývá ~40 kódů pro běžné evropské a japonské značky.
+- Výsledek je dostupný jako pole `vehicle_brand` v API odpovědi.
+
+**Brand badge:**
+
+Značka se zobrazuje jako barevný badge před údaji o vozidle. Badge nahrazuje generickou ikonku auta — pokud je značka neznámá, ikonka `bi-car-front` zůstává.
+
+| Značka  | Barva badge       | Prefix |
+|---------|-------------------|--------|
+| Renault | Zlatá (`#f5c518`) | ◆      |
+| Dacia   | Tmavě modrá       | —      |
+| Nissan  | Červená           | ●      |
+| Ostatní | Šedá              | —      |
+
+### 3.6 Barevné rozlišení a přístupnost (5 úrovní)
 
 Prahové hodnoty (v minutách) konfigurovatelné v administraci:
 
@@ -121,13 +157,17 @@ Výchozí prahy: **15 / 30 / 60 / 120** minut.
 Karta zobrazuje i **textový badge s věkem** (např. „47 min") — informace není závislá jen na barvě.  
 Stav `reopened` je na kartě označen ikonou ↩ a textem „Znovuotevřeno".
 
-### 3.6 Převzetí a ownership požadavku
+U požadavků ve stavu `resolved` se místo aktuálního stáří zobrazuje **doba řešení** (od `created_at` do `resolved_at`) s ikonou ✓. V detailu modálu se řádek „Stáří" přejmenuje na „Vyřízeno za".
+
+**Barevné rozlišení vyřízených požadavků:** úroveň barvy se odvozuje od `resolution_minutes` (doby řešení), nikoli od aktuálního stáří záznamu. Zelená = vyřízeno rychle, tmavě červená = vyřízeno pomalu.
+
+### 3.7 Převzetí a ownership požadavku
 
 - Badge **„Řeší: [jméno]"** na kartě pro stav `in_progress`.
 - Technik klikne „Převzít" → stav `in_progress`, zaznamená se `assigned_to_id` a `assigned_at`.
 - **Přebrání od jiného technika:** zobrazí se potvrzovací dialog s volitelným polem „Důvod přebrání". Akce se loguje; původnímu technikovi se zobrazí informační hlášení při příštím načtení jeho ticketů.
 
-### 3.7 Zpracování požadavku (modální okno)
+### 3.8 Zpracování požadavku (modální okno)
 
 Modální okno:
 
@@ -146,7 +186,7 @@ Modální okno:
 | `resolved`    | Znovuotevřít → `reopened`                                 |
 | `reopened`    | Převzít                                                   |
 
-### 3.8 Editace požadavku
+### 3.9 Editace požadavku
 
 | Pole                   | `user` (před resolved)          | `user` (po resolved/reopened)   | `admin` kdykoli |
 |------------------------|---------------------------------|---------------------------------|-----------------|
@@ -157,19 +197,19 @@ Modální okno:
 
 Každá editace se loguje do `tel_request_history`.
 
-### 3.9 Ochrana souběžných úprav
+### 3.10 Ochrana souběžných úprav
 
 - Při otevření modálu se načte `updated_at` požadavku.
 - Při ukládání klient odešle `expected_updated_at`; server porovná s hodnotou v DB.
 - Nesoulad → HTTP **409**: *„Požadavek byl mezitím upraven uživatelem [jméno]. Klikněte pro obnovení dat."*
 
-### 3.10 Session keepalive a autosave
+### 3.11 Session keepalive a autosave
 
 - Každý API GET požadavek (polling) prodlužuje session — funguje jako **silent keepalive**.
 - Pokud je session 5 minut před vypršením (a uživatel je nečinný), zobrazí se **banner**: *„Vaše session vyprší za 5 minut. Klikněte pro prodloužení."*
 - Při odpočtu session systém automaticky **uloží draft** otevřeného modálu do `sessionStorage`, aby uživatel po přihlášení nepřišel o rozepsaný text.
 
-### 3.11 Sledování doby vyřízení
+### 3.12 Sledování doby vyřízení
 
 - Systém ukládá `created_at` a `resolved_at` pro každý cyklus.
 - SLA čas = od `created_at` do `resolved_at` (včetně doby ve stavu `pending`). Toto je záměrné — pending = klient čeká, čas běží.
@@ -185,6 +225,7 @@ Přístupná pouze pro roli `admin`.
 
 - Seznam uživatelů (jméno, e-mail, role, stav, poslední přihlášení).
 - Přidání nového uživatele → systém odešle e-mail s odkazem pro nastavení hesla.
+- **Editace jména a e-mailové adresy** existujícího uživatele (tlačítko „Upravit"; modal s validací a kontrolou duplicity e-mailu).
 - Blokování / odblokování uživatele.
 - Uživatele **nelze smazat** ani soft-delete (zachování historických dat).
 
@@ -198,11 +239,16 @@ Přístupná pouze pro roli `admin`.
 | Práh barvy úrovně 3          | Minuty do přechodu na úroveň 4                       | 60 min   |
 | Práh barvy úrovně 4          | Minuty do přechodu na úroveň 5                       | 120 min  |
 | Timeout nečinnosti session   | Minut nečinnosti do automatického odhlášení          | 500 min  |
+| S3 Region / Bucket / Object key | Amazon S3 pro synchronizaci vozidel a zálohy DB  | —        |
+| AWS Access Key ID / Secret   | Přihlašovací údaje S3 (chráněno e-mailovým kódem)   | —        |
+| Klíč pro cron endpoint vozidel | Tajný řetězec pro `api/sync-vehicles.php?key=…`   | —        |
+| Složka pro DB zálohy v S3    | Prefix objektu (např. `backups`)                     | backups  |
+| Klíč pro cron endpoint zálohy | Tajný řetězec pro `crony/backup-db.php?key=…`      | —        |
 
 ### 4.3 Statistiky
 
 - **Podle techniků:** počet vyřízených požadavků, průměrná celková doba vyřízení, počet přebrání.
-- **Podle stáří při vyřízení:** počet v každém časovém pásmu.
+- **Podle doby vyřízení:** počet v každém časovém pásmu + procentuální podíl z celku.
 - **Znovuotevřené:** počet ticketů reopened a průměrná doba do opětovného uzavření.
 - Filtr: rozsah datumů.
 - Fyzické mazání ticketů je **zakázáno** i pro admina — statistiky musí zůstat konzistentní.
@@ -228,36 +274,58 @@ Přístupná pouze pro roli `admin`.
 - Globální pohled na audit log (všechny akce) — s filtrem podle uživatele a datumu.
 - Retenční politika logu: záznamy starší **3 let** lze hromadně smazat (i fyzicky, protože jde o logy, ne o byznys data).
 
+### 4.7 Evidence vozidel (`/admin/import-vehicles.php`)
+
+Správa databáze vozidel sloužící pro automatický lookup SPZ.
+
+**Synchronizace ze S3:**
+- Admin spustí synchronizaci ručně tlačítkem, nebo probíhá automaticky přes cron (`api/sync-vehicles.php?key=…`).
+- Cron endpoint před stažením provede HEAD request (ETag) — pokud se soubor nezměnil, stahování přeskočí.
+- Výsledky synchronizace: počet nově vložených, aktualizovaných a přeskočených řádků.
+- Protokol posledních 25 synchronizací (čas, zdroj `ruční/cron`, výsledek, detail chyby).
+
+**Import ze souboru:**
+- Jednorázový import z `dataupload/export-spz.csv` uloženého přímo na serveru (přes FTP).
+- Vstupní CSV: UTF-8 nebo Windows-1250, oddělovač `;`, záhlaví: `klic;spz;nazvoz;rokvyr;vin`.
+
+**Formát CSV (SSIS export z DMS):**
+- SSIS balíček exportuje tabulku vozidel z MSSQL na disk, Synology synchronizuje soubor na Amazon S3.
+- VIN validace: pouze 17 znaků `[A-HJ-NPR-Z0-9]`; ostatní se uloží jako NULL.
+- SPZ se normalizuje (uppercase, bez mezer/pomlček) při importu do `spz_normalized`.
+
+**Zabezpečení S3 nastavení:**
+- Nastavení AWS klíčů je ve výchozím stavu uzamčeno.
+- Odemčení vyžaduje 6místný jednorázový kód zaslaný e-mailem (platnost 10 minut, max. 3 pokusy).
+- Po uložení se sekce automaticky znovu zamkne.
+
+**Stav databáze:**
+- Zobrazuje počet vozidel v DB a datum poslední synchronizace ze S3.
+
+### 4.8 DB zálohy na S3 (`crony/backup-db.php`)
+
+Automatické zálohy databáze do Amazon S3.
+
+- Cron endpoint `crony/backup-db.php?key=…` vygeneruje SQL dump celé DB, zkomprimuje ho (gzip, level 6) a nahraje na S3 jako `{prefix}/telefon-YYYY-MM-DD-HHmm.sql.gz`.
+- Sdílí S3 přihlašovací údaje s evidencí vozidel; zálohovací prefix se konfiguruje zvlášť.
+- Protokol posledních pokusů: čas, název souboru, velikost.
+- Klíč pro cron endpoint se vygeneruje automaticky při prvním zobrazení stránky; lze resetovat.
+- Cron URL se zobrazí v `admin/settings.php` k nastavení na webhostingu.
+
 ---
 
 ## 5. Plánované funkce (výhled – v. 2.0)
 
-### 5.1 Lookup SPZ → VIN + model vozidla
-
-Po uložení nového požadavku systém automaticky vyhledá SPZ v evidenci vozidel:
-
-- Pokud je SPZ nalezena, k požadavku se automaticky doplní **VIN** a **model vozidla**.
-- SPZ se před porovnáváním normalizuje (odstraní mezery/pomlčky, uppercase).
-- Nová tabulka **`tel_vehicles`**: `spz_normalized` (PK), `spz_original`, `vin`, `model`.
-
-**Import z CSV (DMS):**
-
-- Admin sekce poskytne rozhraní pro nahrání CSV.
-- Při importu se SPZ normalizuje před uložením do `spz_normalized`.
-- Import funguje jako **UPSERT**.
-- Formát CSV (oddělovač, kódování, záhlaví) bude upřesněn při implementaci.
-
-### 5.2 Server-side vyhledávání
+### 5.1 Server-side vyhledávání
 
 - Fulltext vyhledávání přes `resolved` tickety v DB.
 - Stránkování výsledků.
 
-### 5.3 Komunikace s klientem
+### 5.2 Komunikace s klientem
 
 - Odeslání **e-mailu** klientovi ze systému.
 - Odeslání **SMS** klientovi.
 
-### 5.4 Ostatní
+### 5.3 Ostatní
 
 - Rozšířené statistiky — export do CSV, grafy.
 
@@ -292,22 +360,32 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 ├── api/
 │   ├── requests.php
 │   ├── settings.php
-│   └── stats.php
+│   ├── stats.php
+│   ├── sms.php
+│   └── sync-vehicles.php       ← cron endpoint: S3 → tel_vehicles (auth: ?key=…)
 │
 ├── admin/
 │   ├── index.php
 │   ├── users.php
-│   ├── settings.php
+│   ├── settings.php            ← systém + S3 + DB zálohy
 │   ├── stats.php
+│   ├── sms.php
+│   ├── import-vehicles.php     ← evidence vozidel + S3 sync + protokol
 │   ├── .htaccess
 │   └── api/
 │       └── users.php
+│
+├── crony/                      ← přístup chráněn klíčem v URL
+│   └── backup-db.php           ← SQL dump → gzip → S3
 │
 ├── assets/
 │   ├── css/style.css
 │   └── js/
 │       ├── app.js
 │       └── admin.js
+│
+├── dataupload/                 ← pro jednorázový FTP upload CSV
+│   └── export-spz.csv          ← vstupní soubor pro import vozidel
 │
 ├── logs/                       ← přístup zakázán přes HTTP (.htaccess deny)
 │   └── app.log
@@ -331,7 +409,20 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `tel_settings`        | Konfigurace systému (key-value)                                    |
 | `tel_password_resets` | Tokeny pro obnovu hesla                                            |
 | `tel_rate_limits`     | Ochrana před brute-force                                           |
-| `tel_vehicles`        | Evidence vozidel SPZ → VIN + model (připraveno pro v. 2.0)        |
+| `tel_vehicles`        | Evidence vozidel: SPZ → model, rok výroby, VIN                    |
+| `tel_sms_queue`       | Fronta odchozích SMS                                               |
+
+#### tel_vehicles — pole
+
+| Sloupec         | Typ              | Poznámka                                              |
+|-----------------|------------------|-------------------------------------------------------|
+| `spz_normalized`| VARCHAR(20)      | PK; uppercase, bez mezer/pomlček                      |
+| `spz_original`  | VARCHAR(20)      | Původní zápis ze zdrojového systému                   |
+| `external_id`   | INT UNSIGNED     | ID z DMS (volitelné)                                  |
+| `model`         | VARCHAR(100)     | Název vozidla (např. „Škoda Octavia")                 |
+| `year`          | SMALLINT UNSIGNED| Rok výroby                                            |
+| `vin`           | VARCHAR(17)      | VIN; NULL pokud nevalidní (`[A-HJ-NPR-Z0-9]{17}`)     |
+| `updated_at`    | DATETIME         | UTC; čas posledního UPSERT                            |
 
 #### tel_requests — klíčová pole
 
@@ -451,7 +542,7 @@ Implementace: tabulka `tel_rate_limits` (`ip_address`, `email`, `action`, `attem
 | Souběžní uživatelé      | < 20 (sdílený hosting dostačuje)                                |
 | Požadavky za den        | < 200                                                           |
 | Doba odezvy             | < 2 s pro všechny operace                                       |
-| Zálohy DB               | Denně (hosting); doporučen vlastní týdenní export přes phpMyAdmin |
+| Zálohy DB               | Automaticky přes `crony/backup-db.php` na S3; zálohovací cyklus hostingu jako fallback |
 | Logování chyb           | PHP error log + `logs/app.log` (přístup zakázán přes HTTP)      |
 | Podporované prohlížeče  | Chrome, Firefox, Edge — poslední 2 major verze                  |
 | Mobilní zobrazení       | Responzivní (Bootstrap 5), optimalizováno pro tablet            |
@@ -490,13 +581,15 @@ Implementace: tabulka `tel_rate_limits` (`ip_address`, `email`, `action`, `attem
 | US-16 | Admin     | Chci anonymizovat osobní údaje klientů starší zvolené lhůty.                                              | Musí mít  |
 | US-17 | Admin     | Chci skrýt (soft-delete) chybně zadaný ticket, aniž bych ho fyzicky smazal.                              | Musí mít  |
 | US-18 | Nový user | Chci si sám nastavit heslo přes odkaz zaslaný na e-mail.                                                  | Musí mít  |
+| US-19 | Technik   | Chci na kartě vidět model a rok vozidla, abych věděl, s čím budu pracovat, ještě před otevřením detailu. | Musí mít  |
+| US-20 | Admin     | Chci synchronizovat databázi vozidel ze S3 ručně nebo přes cron.                                         | Musí mít  |
+| US-21 | Admin     | Chci mít automatické zálohy databáze na S3, abych mohl obnovit data v případě výpadku.                   | Musí mít  |
 
 ---
 
-## 8. Mimo rozsah verze 1.0
+## 8. Mimo rozsah (aktuální verze)
 
 - Odesílání e-mailů / SMS klientovi ze systému.
-- Lookup SPZ → VIN + model (import CSV z DMS).
 - Server-side fulltext vyhledávání (ve vyřízených ticketech).
 - WebSockets / SSE — polling je vědomý kompromis pro hosting.
 - Přesunutí `includes/` mimo webroot (omezení sdíleného hostingu — kompenzováno `.htaccess`).

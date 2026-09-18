@@ -14,6 +14,7 @@ abstract class DatabaseTestCase extends TestCase
         'tel_requests',
         'tel_rate_limits',
         'tel_vehicles',
+        'tel_service_orders',
         'tel_users',
         'tel_settings',
     ];
