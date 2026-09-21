@@ -75,3 +75,109 @@ Sloupce (Flat File Columns):
 - Sloupec `rokvyr` exportujte jako celé číslo (nebo prázdný řetězec, ne NULL).
 - VIN validuje PHP importér: pouze 17 znaků `[A-HJ-NPR-Z0-9]` — ostatní se uloží jako NULL.
 - SPZ se normalizuje (bez mezer a pomlček, velká písmena) při importu.
+
+---
+
+# SSIS Export plánovače → CSV
+
+Objednávky do servisu se do aplikace dostávají stejným řetězcem jako vozidla
+(SSIS → disk → Synology → Amazon S3 → cron `api/sync-vehicles.php`).
+
+## Soubory
+
+| Soubor                   | Obsah                         | `source` v DB |
+|--------------------------|-------------------------------|---------------|
+| `planovac-objednano.csv` | Vozidla objednaná do servisu  | `objednano`   |
+| `planovac-prijem.csv`    | Plán příjmu vozidel           | `prijem`      |
+
+Oba soubory mají **stejnou strukturu** a exportují se stejným způsobem, liší se
+jen filtrem ve zdrojovém dotazu. Aplikace je importuje nezávisle — každý nahradí
+v tabulce `tel_service_orders` pouze řádky svého zdroje. Cca 70 % řádků bývá
+v obou souborech shodných; aplikace duplicity při zobrazení slučuje.
+
+## Požadovaný formát CSV
+
+- Kódování: **Windows-1250** (současný stav) nebo **UTF-8 bez BOM** — importér zvládne obojí
+- Oddělovač sloupců: **středník** (`;`)
+- Textový kvalifikátor: **uvozovky** (`"`)
+- Konce řádků: CRLF
+- První řádek: hlavička — **musí začínat `datum_zac`**, jinak aplikace import odmítne
+  (ochrana proti záměně souborů)
+
+Příklad:
+```
+"datum_zac";"spz";"fabkod";"vinkod";"klient"
+"2026-09-21 07:30:00";"1CE 05-23 ";"VF1";"RFK00574387664";"Novák Jan          "
+"2026-09-21 08:00:00";"9C9 65-39 ";"UU1";"DJF00573054256";"GW JIHOTRANS a.s.  "
+```
+
+Hodnoty doplněné mezerami (padding) nevadí — importér je ořezává.
+
+## Sloupce
+
+| Sloupec     | Popis                                                                 |
+|-------------|-----------------------------------------------------------------------|
+| `datum_zac` | Termín objednávky, formát `YYYY-MM-DD HH:MM:SS`, **lokální čas** (Europe/Prague) |
+| `spz`       | SPZ vozidla; smí být prázdná (nové vozidlo bez registrace)            |
+| `fabkod`    | První 3 znaky VIN (WMI výrobce)                                        |
+| `vinkod`    | Zbývajících 14 znaků VIN                                               |
+| `klient`    | Jméno zákazníka (max. 100 znaků)                                       |
+
+> **VIN vzniká až v aplikaci spojením `fabkod` + `vinkod`** (3 + 14 = 17 znaků).
+> V DMS jsou tyto údaje uložené odděleně, proto se exportují jako dva sloupce.
+
+## SQL dotaz (OLE DB Source)
+
+```sql
+SELECT
+    CONVERT(NVARCHAR(19), DatumZacatku, 120) AS datum_zac,   -- YYYY-MM-DD HH:MM:SS
+    CAST(SPZ      AS NVARCHAR(20))  AS spz,
+    CAST(FabKod   AS NVARCHAR(3))   AS fabkod,
+    CAST(VinKod   AS NVARCHAR(14))  AS vinkod,
+    CAST(Klient   AS NVARCHAR(100)) AS klient
+FROM dbo.VasePlanovac             -- ← upravte název tabulky/view
+WHERE DatumZacatku >= CAST(GETDATE() AS DATE)   -- pouze dnešní a budoucí termíny
+  AND TypZaznamu = 'O'            -- ← filtr objednáno / příjem
+ORDER BY DatumZacatku
+```
+
+> Názvy sloupců, tabulky a hodnotu filtru `TypZaznamu` přizpůsobte vaší databázi.
+> Pro `planovac-prijem.csv` se změní pouze tento filtr, zbytek dotazu zůstává.
+
+## Konfigurace SSIS balíčku
+
+Stejná jako u exportu vozidel, jen s jiným Flat File Connection Managerem:
+
+| Vlastnost               | Hodnota                                  |
+|-------------------------|------------------------------------------|
+| File name               | `C:\Export\planovac-objednano.csv`       |
+| Code page               | 1250 (Windows-1250) nebo 65001 (UTF-8)   |
+| Format                  | Delimited                                |
+| Text qualifier          | `"`                                      |
+| Column names in 1st row | ✔                                        |
+
+Sloupce (Flat File Columns):
+
+| Název     | Delimiter  | Output col width |
+|-----------|------------|------------------|
+| datum_zac | `;`        | 19               |
+| spz       | `;`        | 20               |
+| fabkod    | `;`        | 3                |
+| vinkod    | `;`        | 14               |
+| klient    | `{CR}{LF}` | 100              |
+
+### Plánování (SQL Server Agent)
+
+- Plánovač se mění během dne — doporučená frekvence **každé 2–3 hodiny**
+  v pracovní době (cron aplikace běží ve stejném intervalu a stahuje jen
+  soubor, jehož ETag se změnil).
+- Oba soubory exportujte ve stejném jobu.
+
+## Poznámky
+
+- Soubor je vždy **kompletní snímek** aktuálního stavu plánovače, ne přírůstek.
+  Zrušená objednávka tím pádem z aplikace zmizí při nejbližší synchronizaci.
+- Řádek, který nemá platné datum ani SPZ/VIN, aplikace přeskočí (počet přeskočených
+  je vidět v protokolu na stránce **Admin → Objednávky**).
+- VIN se validuje stejně jako u vozidel: 17 znaků `[A-HJ-NPR-Z0-9]`, jinak se uloží NULL.
+- Historické termíny není nutné exportovat — aplikace zobrazuje jen dnešní a budoucí.
