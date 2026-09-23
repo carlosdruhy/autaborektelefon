@@ -1,7 +1,7 @@
 # Databázové schéma – AutoBorek Tel
 
-**Verze:** 1.0  
-**Datum:** 2026-05-08  
+**Verze:** 1.8 (pobočky – schválený návrh, před implementací)  
+**Datum:** 2026-09-23  
 **Prefix tabulek:** `tel_`  
 **Charset:** `utf8mb4_unicode_ci`  
 **Timezone v DB:** UTC (aplikace zobrazuje v Europe/Prague)
@@ -21,6 +21,8 @@
 | `tel_vehicles`        | Evidence vozidel SPZ → model, rok, VIN (S3 sync) |
 | `tel_sms_queue`       | Fronta odchozích SMS                            |
 | `tel_service_orders`  | Objednávky do servisu (snímek plánovače z S3)   |
+| `tel_branches`        | Číselník poboček (v1.8)                         |
+| `tel_user_branches`   | Přiřazení uživatelů k pobočkám, M:N (v1.8)      |
 
 ---
 
@@ -46,6 +48,7 @@ CREATE TABLE `tel_users` (
 | `role` | Povolené hodnoty: `admin`, `user` |
 | `password_hash` | bcrypt, cost 12; NULL = nový uživatel bez hesla |
 | `is_active` | 0 = blokován, 1 = aktivní |
+| `default_branch_id` | v1.8: `INT UNSIGNED NULL`, FK → `tel_branches.id`; domovská pobočka, předvyplní se u nového požadavku; musí být mezi přiřazenými v `tel_user_branches` |
 
 ---
 
@@ -80,6 +83,8 @@ CREATE TABLE `tel_requests` (
   CONSTRAINT `fk_req_assigned_to` FOREIGN KEY (`assigned_to_id`) REFERENCES `tel_users`(`id`)
 ) ENGINE=InnoDB;
 ```
+
+**v1.8:** `branch_id INT UNSIGNED NOT NULL`, FK → `tel_branches.id`, `INDEX idx_req_branch (branch_id, status)`. Pobočka, která požadavek řeší. Mění se akcí `change_branch`: `status='new'`, `assigned_to_id=NULL`, `assigned_at=NULL`, `created_at` beze změny.
 
 ### Povolené hodnoty `status`
 
@@ -140,6 +145,7 @@ CREATE TABLE `tel_request_history` (
 | `reopened` | Znovuotevření |
 | `soft_deleted` | Soft delete adminem |
 | `anonymized` | GDPR anonymizace |
+| `branch_changed` | Přeřazení na jinou pobočku (v1.8); `field_name='branch_id'`, `old_value`/`new_value` = ID poboček; způsob uložení důvodu upřesní implementace |
 
 Záznamy `old_value` / `new_value` jsou zkráceny na 500 znaků (delší s příponou `[zkráceno]`).
 
@@ -278,3 +284,57 @@ Objednávky do servisu z plánovače DMS. Dva zdrojové soubory na S3 se stejnou
 - Tabulka je **snímek**: každý import (`importServiceOrdersCsv($db, $path, $source)`) v jedné transakci smaže řádky svého `source` a vloží nové. Žádný unikátní klíč; stejná objednávka bývá v obou souborech (dedup až při zobrazení).
 - Řádek bez SPZ i bez platného VIN se při importu přeskočí.
 - Migrace: `_local/migrate-service-orders.sql`, `_local/migrate-service-orders-prijem.sql`.
+- **v1.8:** `center_code VARCHAR(20) NULL`, `INDEX idx_so_center (center_code)`. Kód střediska DMS z nového sloupce CSV (`3` = Borek, `33` = Tábor), porovnává se jako přesný řetězec po `trim()`. Formát sloupce se doplní podle ukázky exportu.
+
+---
+
+## tel_branches (v1.8)
+
+```sql
+CREATE TABLE `tel_branches` (
+  `id`              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `code`            VARCHAR(20)  NOT NULL,           -- krátký kód, badge na kartě
+  `name`            VARCHAR(100) NOT NULL,
+  `dms_center_code` VARCHAR(20)  DEFAULT NULL,       -- středisko DMS; NENÍ unikátní
+  `is_active`       TINYINT(1)   NOT NULL DEFAULT 1,
+  `sort_order`      SMALLINT     NOT NULL DEFAULT 0,
+  `created_at`      DATETIME     NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_branch_code` (`code`)
+) ENGINE=InnoDB;
+```
+
+- Pobočky se nemažou, jen deaktivují (`is_active = 0`).
+- Víc poboček může sdílet středisko (pobočka → středisko N:1):
+
+| Pobočka          | `dms_center_code` |
+|------------------|-------------------|
+| Borek – servis   | `3`               |
+| Borek – lakovna  | `3`               |
+| Tábor – servis   | `33`              |
+
+DMS v plánovači servis a lakovnu Borek nerozlišuje, proto se objednávky párují na úrovni střediska.
+
+---
+
+## tel_user_branches (v1.8)
+
+```sql
+CREATE TABLE `tel_user_branches` (
+  `user_id`   INT UNSIGNED NOT NULL,
+  `branch_id` INT UNSIGNED NOT NULL,
+  PRIMARY KEY (`user_id`, `branch_id`),
+  INDEX `idx_ub_branch` (`branch_id`),
+  CONSTRAINT `fk_ub_user`   FOREIGN KEY (`user_id`)   REFERENCES `tel_users`(`id`),
+  CONSTRAINT `fk_ub_branch` FOREIGN KEY (`branch_id`) REFERENCES `tel_branches`(`id`)
+) ENGINE=InnoDB;
+```
+
+Určuje, které pobočky uživatel vidí (plný přístup). Admin vidí vše bez ohledu na tuto tabulku. Autor požadavku má navíc zadavatelský přístup ke svým požadavkům na cizích pobočkách (viz PRD 3.14.2).
+
+### Migrace (`_local/migrate-branches.sql`)
+
+1. Vytvořit `tel_branches` a `tel_user_branches`.
+2. Vložit výchozí pobočku. Přidat `tel_requests.branch_id` (nejdřív NULL), naplnit ho výchozí pobočkou, pak nastavit `NOT NULL`, FK a index.
+3. Přidat `tel_users.default_branch_id` a všechny uživatele přiřadit k výchozí pobočce (v M:N i jako domovskou).
+4. Přidat `tel_service_orders.center_code`.

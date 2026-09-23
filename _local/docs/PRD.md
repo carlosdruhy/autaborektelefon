@@ -1,7 +1,7 @@
 # PRD – Evidenční systém telefonických požadavků AutoBorek
 
-**Verze:** 1.7  
-**Datum:** 2026-09-18  
+**Verze:** 1.8 (pobočky – schválený návrh, před implementací)  
+**Datum:** 2026-09-23  
 **Adresa aplikace:** https://tel.auto-borek.cz  
 **Administrace:** https://tel.auto-borek.cz/admin/  
 **Technologie:** PHP 8+, MySQL, JavaScript, Bootstrap 5  
@@ -20,6 +20,7 @@
 | 1.5   | 2026-06-26 | Barevné rozlišení vyřízených požadavků podle doby řešení (ne stáří); lookup vozidla při zadávání nového požadavku (blur na SPZ); statistiky podle doby vyřízení doplněny o procentuální podíl |
 | 1.6   | 2026-07-03 | Editace jména a e-mailu uživatele v admin správě uživatelů |
 | 1.7   | 2026-09-18 | Plánovač – objednávky do servisu: tabulka `tel_service_orders` plněná ze dvou S3 souborů (`planovac-objednano.csv`, `planovac-prijem.csv`); termín objednání + jméno zákazníka na kartě požadavku a v detailu; nová admin stránka Objednávky; jeden cron endpoint pro vozidla i objednávky; sjednocená S3 sync logika; nové rozložení karty (2 sloupce, poznámka technika vpravo nahoře) |
+| 1.8   | 2026-09-23 | **Pobočky** (schválený návrh): číselník `tel_branches`, přiřazení uživatelů k pobočkám M:N + domovská pobočka, `tel_requests.branch_id`; viditelnost požadavků podle pobočky + zadavatelský přístup; přeřazení na jinou pobočku (návrat do stavu `new`, audit); tlačítko „Opravit údaje“ včetně SPZ; filtr a badge pobočky na dashboardu; admin stránka Pobočky; statistiky podle poboček; středisko DMS u objednávek plánovače (vazba pobočka → středisko N:1) |
 
 ---
 
@@ -34,7 +35,9 @@ Webová aplikace umožňující recepci autoservisu evidovat příchozí telefon
 | Role    | Popis                                                                                              |
 |---------|----------------------------------------------------------------------------------------------------|
 | `admin` | Plný přístup: správa uživatelů, nastavení systému, statistiky, anonymizace dat, soft delete záznamů |
-| `user`  | Vytváří a zpracovává požadavky; nemůže mazat ani anonymizovat                                      |
+| `user`  | Vytváří a zpracovává požadavky svých poboček (viz 3.14); nemůže mazat ani anonymizovat             |
+
+Role se nemění. Vedoucí nebo zástup, který pokrývá víc poboček, je běžný `user` přiřazený k více pobočkám.
 
 ### 2.1 Přihlášení a správa hesel
 
@@ -199,14 +202,20 @@ Modální okno:
 
 ### 3.9 Editace požadavku
 
-| Pole                   | `user` (před resolved)          | `user` (po resolved/reopened)   | `admin` kdykoli |
-|------------------------|---------------------------------|---------------------------------|-----------------|
-| SPZ, Jméno, Tel., E-mail | Ano (s audit logem)            | Ne                              | Ano             |
-| Text požadavku         | Jen před `in_progress`          | Ne                              | Ano             |
-| Poznámka k řešení      | Přiřazený technik               | Ne                              | Ano             |
-| Důvod čekání           | Přiřazený technik (při pending) | Ne                              | Ano             |
+| Pole                   | `user` s plným přístupem (před resolved) | `user` se zadavatelským přístupem (3.14) | `user` po resolved/reopened | `admin` kdykoli |
+|------------------------|---------------------------------|---------------------------------|---------------------------------|-----------------|
+| SPZ, Jméno, Tel., E-mail | Ano (s audit logem)            | Jen ve stavu `new`              | Ne                              | Ano             |
+| Text požadavku         | Jen před `in_progress`          | Ne                              | Ne                              | Ano             |
+| Poznámka k řešení      | Přiřazený technik               | Ne                              | Ne                              | Ano             |
+| Důvod čekání           | Přiřazený technik (při pending) | Ne                              | Ne                              | Ano             |
 
 Každá editace se loguje do `tel_request_history`.
+
+**Tlačítko „Opravit údaje“** (v1.8, nahrazuje „Upravit kontakt“): řešitel během zpětného volání zjistí jinou kontaktní osobu, jiný telefon nebo špatně nahlášenou SPZ a opraví je jedním dialogem (SPZ, jméno, telefon, e-mail).
+- Uloží se v jedné transakci s kontrolou `expected_updated_at`.
+- Každé změněné pole se zaloguje zvlášť (`field_edit`, staré → nové). Důvod opravy se nezadává, log staré → nové stačí.
+- Po změně SPZ se na kartě znovu dohledá vozidlo (model, rok, VIN) i objednávky plánovače, protože párování běží přes SPZ.
+- V historii se zobrazí jako „Opraveno (jméno): SPZ 1AB2345 → 1AB2354“.
 
 ### 3.10 Ochrana souběžných úprav
 
@@ -247,6 +256,81 @@ Když je vozidlo z požadavku objednané do servisu, technik to vidí přímo na
 
 **Implementace:** `getUpcomingServiceOrders()` načte jedním dotazem všechny nadcházející objednávky pro SPZ/VIN z aktuální stránky seznamu, `matchServiceOrders()` je přiřadí k řádkům a deduplikuje; API vrací pole `service_orders[] = {scheduled_at_local, client_name, source}`.
 
+**Středisko (v1.8):** u termínu se zobrazí středisko DMS, např. `📅 Plánovač: 25.9.2026 8:00 (Jan Novák) · Tábor`. Pokud středisko objednávky neodpovídá středisku pobočky požadavku, termín se zvýrazní jako upozornění (nápověda k přeřazení, viz 3.14.5). Objednávky se podle pobočky **nefiltrují**.
+
+### 3.14 Pobočky (v1.8)
+
+Firma má více poboček. Každý požadavek patří právě jedné pobočce. Uživatelé vidí požadavky svých poboček a zadavatel volí, které pobočce požadavek přidělí.
+
+**Pobočky při spuštění (3):**
+
+| Pobočka           | Středisko DMS (`dms_center_code`) |
+|-------------------|-----------------------------------|
+| Borek – servis    | `3`                               |
+| Borek – lakovna   | `3`                               |
+| Tábor – servis    | `33`                              |
+
+Kódy a názvy poboček v aplikaci určí admin. Víc poboček může sdílet jedno středisko (vazba pobočka → středisko je N:1). Kódy středisek se porovnávají jako **přesný řetězec** po `trim()`, nikdy prefixem (`3` ≠ `33`).
+
+#### 3.14.1 Přiřazení uživatelů
+
+- Uživatel může být přiřazen k **jedné nebo více** pobočkám (M:N, `tel_user_branches`).
+- Jedna z nich je **domovská** (`tel_users.default_branch_id`) a předvyplní se při zakládání požadavku. Domovská pobočka musí být mezi přiřazenými.
+- Uživatel bez pobočky nevidí žádné požadavky a nemůže zakládat nové. Dashboard zobrazí hlášku „Nemáte přiřazenou pobočku, kontaktujte administrátora.“
+- Admin vidí všechny pobočky bez ohledu na přiřazení.
+
+#### 3.14.2 Typy přístupu k požadavku
+
+| Přístup | Kdo | Co smí |
+|---|---|---|
+| **Plný** | člen pobočky požadavku; admin | vše podle stávajících pravidel (převzít, řešit, editovat, SMS…), přeřadit |
+| **Zadavatelský** | autor požadavku (`created_by`), který není členem pobočky požadavku | vidět kartu a detail, **přeřadit** (3.14.4), opravit údaje jen ve stavu `new` |
+| žádný | ostatní | nic, API vrací 403 |
+
+Zadavatelský přístup řeší dvě situace:
+- zadavatel uloží požadavek, pak zjistí, že zvolil špatnou pobočku, a hned ho přeřadí;
+- klient volá znovu a zadavatel mu umí říct stav.
+
+Tyto karty jsou vizuálně tlumené, mají ikonu „zadal jsem“ a **nemají tlačítko Převzít**. Zobrazují se, dokud požadavek není vyřízený.
+
+#### 3.14.3 Založení požadavku
+
+- Ve formuláři je nahoře select **Pobočka** se všemi aktivními pobočkami, předvyplněný domovskou pobočkou zadavatele.
+- Zadavatel může zvolit libovolnou aktivní pobočku, nejen svou. Při volbě jiné než domovské se select barevně zvýrazní, aby se přehlédnutí poznalo.
+- Server ověří, že pobočka existuje a je aktivní.
+
+#### 3.14.4 Přeřazení na jinou pobočku (`action_type=change_branch`)
+
+- **Kdo:** kdokoli s plným nebo zadavatelským přístupem.
+- **Kdy:** ve stavech `new`, `in_progress` a `pending`. Vyřízený požadavek (`resolved`) je potřeba nejdřív znovu otevřít. Přeřazení na stejnou pobočku se odmítne.
+- **Efekt:** `branch_id` = cílová pobočka, `status = 'new'`, `assigned_to_id = NULL`, `assigned_at = NULL`. Požadavek se na cílové pobočce chová jako nový, nepřevzatý.
+  - Zachovává se `created_at`, tedy stáří a barva naléhavosti, protože klient čeká od prvního hovoru. SLA a statistiky se nemění.
+  - Zachovává se poznámka technika jako informace pro cílovou pobočku.
+- **Důvod přeřazení:** povinný, pokud je požadavek převzatý (`assigned_to_id` není NULL) nebo starší než 10 minut. Jinak je volitelný (zadavatel opravuje překlep hned po uložení).
+- **Audit:** `logAudit(..., 'branch_changed', 'branch_id', <stará>, <nová>)` a důvod. V historii se zobrazí „Přeřazeno z PHA na KLA (jméno): důvod…“.
+- **Souběh:** kontrola `expected_updated_at`, při konfliktu HTTP 409.
+- **Po přeřazení:** uživatel, který není členem cílové pobočky ani autorem, požadavek ztratí z přehledu a zobrazí se mu toast „Požadavek přeřazen na …“.
+- **Cílová pobočka:** požadavek se jí objeví jako nové ID, takže `detectNewRequests()` automaticky spustí zvuk a notifikaci. Karta nese štítek „↪ z PHA“ (poslední přeřazení z historie).
+
+#### 3.14.5 Dashboard
+
+- **Badge pobočky** (kód) na kartě a pobočka v hlavičce detailu. Zobrazí se jen uživatelům, kteří vidí více než jednu pobočku.
+- **Filtr poboček:** řada přepínacích tlačítek `Vše | <kód> | <kód> | …` vedle stávajících filtrů. Jen pro uživatele s více pobočkami, uložení v `localStorage` pod klíčem `AB_TEL_BRANCH`.
+- **Tlačítko „Přeřadit na jinou pobočku“** v detailu: dialog s výběrem cílové pobočky a polem důvodu.
+- **Plánovač:** zvýraznění termínu z jiného střediska (viz 3.13) slouží jako nápověda, že požadavek možná patří jinam. Servis a lakovnu v Borku nelze rozlišit, protože sdílejí středisko `3` a DMS v plánovači provoz nerozlišuje (ověřeno 2026-09-23). Při přeřazení mezi nimi se proto upozornění nezobrazí.
+
+#### 3.14.6 Zabezpečení
+
+- Viditelnost se kontroluje **na serveru** při každém volání. Filtr v UI je jen pohodlí.
+- `userBranchIds()` načítá pobočky uživatele z DB při každém API volání (neukládá se do session), takže změna od admina platí okamžitě.
+- `requireBranchAccess($req, $level)` se volá v `handleGet`, ve všech akcích `handleUpdate`, v `api/sms.php` (enqueue, list) a u historie. Ochrana proti IDOR: bez ní by šel cizí požadavek otevřít změnou `id`.
+- Výpis: `WHERE (r.branch_id IN (:moje_pobocky) OR r.created_by = :ja)`. Admin je bez omezení.
+- Integrační test `tests/Integration/BranchAccessTest.php`.
+
+#### 3.14.7 Migrace stávajících dat
+
+Migrační skript vytvoří výchozí pobočku a přiřadí k ní všechny existující požadavky i uživatele (jako domovskou). Aplikace po nasazení funguje jako dosud. Admin pak doplní další pobočky a přiřazení.
+
 ---
 
 ## 4. Administrace (`/admin/`)
@@ -260,6 +344,7 @@ Přístupná pouze pro roli `admin`.
 - **Editace jména a e-mailové adresy** existujícího uživatele (tlačítko „Upravit"; modal s validací a kontrolou duplicity e-mailu).
 - Blokování / odblokování uživatele.
 - Uživatele **nelze smazat** ani soft-delete (zachování historických dat).
+- **Pobočky uživatele (v1.8):** zaškrtávací seznam poboček a výběr domovské pobočky (jen z přiřazených). V seznamu uživatelů je sloupec s kódy poboček.
 
 ### 4.2 Nastavení systému
 
@@ -285,7 +370,8 @@ Přístupná pouze pro roli `admin`.
 - **Podle techniků:** počet vyřízených požadavků, průměrná celková doba vyřízení, počet přebrání.
 - **Podle doby vyřízení:** počet v každém časovém pásmu + procentuální podíl z celku.
 - **Znovuotevřené:** počet ticketů reopened a průměrná doba do opětovného uzavření.
-- Filtr: rozsah datumů.
+- **Podle poboček (v1.8):** počet požadavků, vyřízených, průměrná doba vyřízení a počet přeřazení. Požadavek se počítá pobočce, kde je aktuálně (tedy té, která ho vyřešila).
+- Filtr: rozsah datumů, pobočka (v1.8).
 - Fyzické mazání ticketů je **zakázáno** i pro admina — statistiky musí zůstat konzistentní.
 
 ### 4.4 Soft delete záznamů
@@ -377,6 +463,19 @@ Oba soubory mají stejnou strukturu: `datum_zac;spz;fabkod;vinkod;klient` (Windo
 - náhled nadcházejících objednávek od dneška (max. 500) seskupených po dnech: čas, SPZ, model z evidence vozidel, VIN, klient, zdroj.
 
 **Migrace:** `_local/migrate-service-orders.sql` (tabulka + nastavení), poté `_local/migrate-service-orders-prijem.sql` (sloupec `source` + nastavení pro příjem).
+
+**Středisko (v1.8):**
+- Oba soubory dostanou nový sloupec s kódem střediska DMS (`3` = Borek, `33` = Tábor) a ukládá se do `tel_service_orders.center_code`.
+- Přesný název a formát sloupce se doplní podle ukázky nového exportu.
+- Importér na přechodnou dobu přijímá starý i nový formát (sloupec střediska je volitelný). Pořadí nasazení aplikace a změny SSIS exportu tak nehraje roli.
+- Náhled nadcházejících objednávek zobrazuje i středisko.
+
+### 4.10 Pobočky (`/admin/branches.php`, v1.8)
+
+- Seznam poboček: kód, název, středisko DMS, pořadí, aktivní, počet uživatelů a aktivních požadavků.
+- Přidání a úprava pobočky. Kód je unikátní a krátký (zobrazuje se jako badge).
+- Pobočky se **nemažou**, jen deaktivují. Neaktivní pobočku nelze zvolit pro nový požadavek ani jako cíl přeřazení, ale historické požadavky ji dál zobrazují.
+- Deaktivaci pobočky s aktivními (nevyřízenými) požadavky systém odmítne, dokud se požadavky nepřeřadí.
 
 ---
 
@@ -480,6 +579,10 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `tel_vehicles`        | Evidence vozidel: SPZ → model, rok výroby, VIN                    |
 | `tel_sms_queue`       | Fronta odchozích SMS                                               |
 | `tel_service_orders`  | Objednávky do servisu (snímek plánovače ze dvou S3 souborů)        |
+| `tel_branches`        | Číselník poboček (v1.8)                                            |
+| `tel_user_branches`   | Přiřazení uživatelů k pobočkám, M:N (v1.8)                         |
+
+Nová pole v1.8: `tel_users.default_branch_id`, `tel_requests.branch_id`, `tel_service_orders.center_code`. Schéma viz `_local/docs/databaze.md`.
 
 #### tel_vehicles — pole
 
@@ -521,6 +624,7 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `status`          | VARCHAR(20)   | `new` / `in_progress` / `pending` / `resolved` / `reopened` — **VARCHAR, ne ENUM** (lepší migrovatelnost) |
 | `pending_reason`  | TEXT          | Povinné při stavu `pending`                                 |
 | `reopen_reason`   | TEXT          | Povinné při přechodu do `reopened`                          |
+| `branch_id`       | INT UNSIGNED  | FK → `tel_branches.id`; NOT NULL; pobočka, která požadavek řeší (v1.8) |
 | `created_by`      | INT UNSIGNED  | FK → `tel_users.id`                                         |
 | `assigned_to_id`  | INT UNSIGNED  | FK → `tel_users.id`; NULL = nepřevzato                      |
 | `assigned_at`     | DATETIME      | UTC                                                         |
@@ -537,7 +641,7 @@ telefon/                        ← webroot subdomény tel.auto-borek.cz
 | `id`         | INT UNSIGNED | PK                                                                 |
 | `request_id` | INT UNSIGNED | FK → `tel_requests.id`                                             |
 | `user_id`    | INT UNSIGNED | FK → `tel_users.id`                                                |
-| `action`     | VARCHAR(50)  | `created`, `status_change`, `field_edit`, `assigned`, `takeover`, `soft_deleted`, `anonymized`, `reopened` |
+| `action`     | VARCHAR(50)  | `created`, `status_change`, `field_edit`, `assigned`, `takeover`, `soft_deleted`, `anonymized`, `reopened`, `branch_changed` (v1.8) |
 | `field_name` | VARCHAR(50)  | Editované pole (NULL pro stavové akce)                             |
 | `old_value`  | TEXT         | Max. 500 znaků uložených; delší hodnoty zkráceny s poznámkou `[zkráceno]` |
 | `new_value`  | TEXT         | Max. 500 znaků                                                     |
@@ -552,6 +656,7 @@ INDEX idx_req_created       (created_at)
 INDEX idx_req_assigned      (assigned_to_id)
 INDEX idx_req_updated       (updated_at)
 INDEX idx_req_deleted       (deleted_at)   -- pro rychlé vyloučení soft-deleted
+INDEX idx_req_branch        (branch_id, status)   -- v1.8, výpis podle pobočky
 
 -- tel_request_history
 INDEX idx_hist_request      (request_id)
@@ -670,6 +775,13 @@ Implementace: tabulka `tel_rate_limits` (`ip_address`, `email`, `action`, `attem
 | US-21 | Admin     | Chci mít automatické zálohy databáze na S3, abych mohl obnovit data v případě výpadku.                   | Musí mít  |
 | US-22 | Technik   | Chci na kartě požadavku vidět, na kdy je vozidlo objednané do servisu a na koho, abych klientovi rovnou odpověděl. | Musí mít  |
 | US-23 | Admin     | Chci, aby se objednávky z plánovače načítaly automaticky stejným cronem jako vozidla, bez další konfigurace. | Musí mít  |
+| US-24 | Recepční  | Chci při zápisu požadavku mít předvyplněnou svou pobočku, ale moci zvolit jinou.                          | Musí mít  |
+| US-25 | Technik   | Chci vidět jen požadavky svých poboček, abych neřešil cizí práci.                                          | Musí mít  |
+| US-26 | Recepční  | Chci požadavek, který jsem omylem přidělil špatné pobočce, sám přeřadit.                                   | Musí mít  |
+| US-27 | Technik   | Chci po zpětném volání přeřadit požadavek na jinou pobočku, kde se bude řešit jako nový.                  | Musí mít  |
+| US-28 | Technik   | Chci během hovoru opravit kontaktní osobu, telefon nebo SPZ, a aby se oprava zapsala do historie.         | Musí mít  |
+| US-29 | Admin     | Chci spravovat pobočky a přiřazovat k nim uživatele (i k více pobočkám).                                   | Musí mít  |
+| US-30 | Technik   | Chci u termínu z plánovače vidět středisko, abych poznal, že je vůz objednaný jinde.                      | Mělo by mít |
 
 ---
 
