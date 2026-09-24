@@ -44,11 +44,27 @@ jsonErr('Bad request');
 
 // ─── Handlery ────────────────────────────────────────────────────────────────
 
+/** Úroveň přístupu přihlášeného uživatele k požadavku podle pobočky ('none', i když neexistuje). */
+function smsRequestAccess(int $requestId): string
+{
+    $db   = getDB();
+    $stmt = $db->prepare('SELECT branch_id, created_by FROM tel_requests WHERE id = ?');
+    $stmt->execute([$requestId]);
+    $req = pdoFetch($stmt);
+    if ($req === false) {
+        return 'none';
+    }
+    return requestAccessLevel($req, currentUserId(), isAdmin(), userBranchIds($db, currentUserId()));
+}
+
 function handleSmsList(): never
 {
     $requestId = isset($_GET['request_id']) ? arrInt($_GET, 'request_id') : null;
 
     if ($requestId !== null) {
+        if (smsRequestAccess($requestId) === 'none') {
+            jsonErr('Přístup odepřen', 403);
+        }
         $stmt = getDB()->prepare(
             'SELECT q.id, q.phone, q.message, q.status, q.created_at, q.sent_at, q.error_msg,
                     u.name AS sent_by_name
@@ -137,6 +153,13 @@ function handleEnqueue(array $body): never
     }
     if (mb_strlen($message) > 400) {
         jsonErr('Zpráva může mít maximálně 400 znaků');
+    }
+    // SMS ke klientovi smí poslat jen pobočka, která požadavek řeší (nebo admin)
+    if ($requestId !== null && smsRequestAccess($requestId) !== 'full') {
+        jsonErr('Požadavek patří pobočce, ke které nemáte přístup', 403);
+    }
+    if ($requestId === null && !isAdmin()) {
+        jsonErr('Chybí požadavek, ke kterému SMS patří');
     }
 
     $db = getDB();

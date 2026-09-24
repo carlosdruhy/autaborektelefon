@@ -106,9 +106,9 @@ v obou souborech shodných; aplikace duplicity při zobrazení slučuje.
 
 Příklad:
 ```
-"datum_zac";"spz";"fabkod";"vinkod";"klient"
-"2026-09-21 07:30:00";"1CE 05-23 ";"VF1";"RFK00574387664";"Novák Jan          "
-"2026-09-21 08:00:00";"9C9 65-39 ";"UU1";"DJF00573054256";"GW JIHOTRANS a.s.  "
+"datum_zac";"spz";"fabkod";"vinkod";"klient";"stredisko"
+"2026-09-21 07:30:00";"1CE 05-23 ";"VF1";"RFK00574387664";"Novák Jan          ";"3"
+"2026-09-21 08:00:00";"9C9 65-39 ";"UU1";"DJF00573054256";"GW JIHOTRANS a.s.  ";"33"
 ```
 
 Hodnoty doplněné mezerami (padding) nevadí — importér je ořezává.
@@ -122,6 +122,7 @@ Hodnoty doplněné mezerami (padding) nevadí — importér je ořezává.
 | `fabkod`    | První 3 znaky VIN (WMI výrobce)                                        |
 | `vinkod`    | Zbývajících 14 znaků VIN                                               |
 | `klient`    | Jméno zákazníka (max. 100 znaků)                                       |
+| `stredisko` | Kód střediska DMS (`3` = Borek, `33` = Tábor). Aplikace podle něj ukazuje, kde je vůz objednaný (v1.8) |
 
 > **VIN vzniká až v aplikaci spojením `fabkod` + `vinkod`** (3 + 14 = 17 znaků).
 > V DMS jsou tyto údaje uložené odděleně, proto se exportují jako dva sloupce.
@@ -134,7 +135,8 @@ SELECT
     CAST(SPZ      AS NVARCHAR(20))  AS spz,
     CAST(FabKod   AS NVARCHAR(3))   AS fabkod,
     CAST(VinKod   AS NVARCHAR(14))  AS vinkod,
-    CAST(Klient   AS NVARCHAR(100)) AS klient
+    CAST(Klient   AS NVARCHAR(100)) AS klient,
+    CAST(Stredisko AS NVARCHAR(20)) AS stredisko   -- ← kód střediska (v1.8)
 FROM dbo.VasePlanovac             -- ← upravte název tabulky/view
 WHERE DatumZacatku >= CAST(GETDATE() AS DATE)   -- pouze dnešní a budoucí termíny
   AND TypZaznamu = 'O'            -- ← filtr objednáno / příjem
@@ -164,7 +166,8 @@ Sloupce (Flat File Columns):
 | spz       | `;`        | 20               |
 | fabkod    | `;`        | 3                |
 | vinkod    | `;`        | 14               |
-| klient    | `{CR}{LF}` | 100              |
+| klient    | `;`        | 100              |
+| stredisko | `{CR}{LF}` | 20               |
 
 ### Plánování (SQL Server Agent)
 
@@ -172,6 +175,24 @@ Sloupce (Flat File Columns):
   v pracovní době (cron aplikace běží ve stejném intervalu a stahuje jen
   soubor, jehož ETag se změnil).
 - Oba soubory exportujte ve stejném jobu.
+
+### Vyprázdnění souborů před exportem (povinné)
+
+Export do souboru, který už existuje, **připisuje na konec** (v Data Flow chybí přepis
+souboru). Soubor pak obsahuje několik exportů za sebou a aplikace ho odmítne
+(„Soubor obsahuje hlavičku N×“). Účet SQL Agenta (`NT SERVICE\SQLSERVERAGENT`) má
+ke složce právo zápisu, ale ne mazání, takže se soubory **vyprázdní** místo smazání.
+
+**První krok jobu** (typ *Operating system (CmdExec)*, před všemi exporty):
+
+```
+cmd /c for %f in ("D:\ntserver\G\Sklad\DMS-NV\*.csv") do type nul > "%f"
+```
+
+Pořadí kroků: 1. vyprázdnění → 2. exporty → 3. nahrání na S3. Nahrávání nesmí
+běžet souběžně s exportem — soubor nahraný během zápisu má useknutý poslední řádek
+a aplikace ho také odmítne („Soubor je neúplný“). V obou případech zůstávají v aplikaci
+poslední platná data a chyba je v protokolu na stránce **Admin → Objednávky**.
 
 ## Poznámky
 

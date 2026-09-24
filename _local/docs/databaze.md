@@ -1,6 +1,6 @@
 # Databázové schéma – AutoBorek Tel
 
-**Verze:** 1.8 (pobočky – schválený návrh, před implementací)  
+**Verze:** 1.8 (pobočky)  
 **Datum:** 2026-09-23  
 **Prefix tabulek:** `tel_`  
 **Charset:** `utf8mb4_unicode_ci`  
@@ -145,7 +145,7 @@ CREATE TABLE `tel_request_history` (
 | `reopened` | Znovuotevření |
 | `soft_deleted` | Soft delete adminem |
 | `anonymized` | GDPR anonymizace |
-| `branch_changed` | Přeřazení na jinou pobočku (v1.8); `field_name='branch_id'`, `old_value`/`new_value` = ID poboček; způsob uložení důvodu upřesní implementace |
+| `branch_changed` | Přeřazení na jinou pobočku (v1.8); `field_name='branch_id'`, `old_value`/`new_value` = ID poboček. Důvod je samostatný záznam `field_edit` s `field_name='branch_change_reason'`; zrušené převzetí `field_edit` s `field_name='assigned_to_id'` |
 
 Záznamy `old_value` / `new_value` jsou zkráceny na 500 znaků (delší s příponou `[zkráceno]`).
 
@@ -284,7 +284,7 @@ Objednávky do servisu z plánovače DMS. Dva zdrojové soubory na S3 se stejnou
 - Tabulka je **snímek**: každý import (`importServiceOrdersCsv($db, $path, $source)`) v jedné transakci smaže řádky svého `source` a vloží nové. Žádný unikátní klíč; stejná objednávka bývá v obou souborech (dedup až při zobrazení).
 - Řádek bez SPZ i bez platného VIN se při importu přeskočí.
 - Migrace: `_local/migrate-service-orders.sql`, `_local/migrate-service-orders-prijem.sql`.
-- **v1.8:** `center_code VARCHAR(20) NULL`, `INDEX idx_so_center (center_code)`. Kód střediska DMS z nového sloupce CSV (`3` = Borek, `33` = Tábor), porovnává se jako přesný řetězec po `trim()`. Formát sloupce se doplní podle ukázky exportu.
+- **v1.8:** `center_code VARCHAR(20) NULL`, `INDEX idx_so_center (center_code)`. Kód střediska DMS z nového sloupce CSV (`3` = Borek, `33` = Tábor), porovnává se jako přesný řetězec po `trim()`. Sloupec CSV `stredisko` (poslední).
 
 ---
 

@@ -872,11 +872,16 @@ function pragueToUtc(string $local): string|false
 /**
  * Importuje CSV s objednávkami do servisu do tel_service_orders.
  *
- * Zdroje jsou dva soubory se stejnou strukturou (datum_zac;spz;fabkod;vinkod;klient):
+ * Zdroje jsou dva soubory se stejnou strukturou (datum_zac;spz;fabkod;vinkod;klient[;stredisko]):
  * planovac-objednano.csv ($file = 'objednano') a planovac-prijem.csv ($file = 'prijem').
  * Každý je snímek aktuálního stavu, proto se vždy nahradí všechny řádky daného zdroje
  * (sloupec `source`); řádky druhého zdroje zůstávají. VIN vzniká spojením fabkod + vinkod.
+ * Sloupec `stredisko` (kód střediska DMS) je volitelný — starší export ho nemá.
  * Zvládá UTF-8 i Windows-1250.
+ *
+ * Soubor, který obsahuje hlavičku víckrát (export se připsal na konec místo přepsání),
+ * nebo jehož poslední řádek je neúplný (soubor se nahrál během zápisu), se odmítne celý
+ * a v tabulce zůstanou poslední platná data.
  *
  * @return array{imported:int,skipped:int,errors:list<string>}
  */
@@ -911,20 +916,50 @@ function importServiceOrdersCsv(PDO $db, string $csvPath, string $file = 'objedn
     $lines = explode("\n", str_replace("\r\n", "\n", $raw));
 
     // Ochrana proti importu cizího souboru: první sloupec hlavičky musí být datum_zac
-    $header = str_getcsv(trim($lines[0]), ';', '"', '');
-    if (trim((string) ($header[0] ?? '')) !== 'datum_zac') {
-        $stats['errors'][] = 'Neočekávaný formát souboru (chybí hlavička datum_zac;spz;fabkod;vinkod;klient).';
+    $header = array_map(
+        static fn (?string $f): string => strtolower(trim((string) $f)),
+        str_getcsv(trim($lines[0]), ';', '"', '')
+    );
+    if ($header[0] !== 'datum_zac') {
+        $stats['errors'][] = 'Neočekávaný formát souboru (chybí hlavička datum_zac;spz;fabkod;vinkod;klient;stredisko).';
         return $stats;
     }
+    $columnCount = count($header);
+    $centerIdx   = array_search('stredisko', $header, true);
 
-    $rows = [];
+    $parsed = [];
     foreach ($lines as $lineNo => $line) {
         $line = trim($line);
         if ($lineNo === 0 || $line === '') {
             continue;
         }
+        $parsed[] = str_getcsv($line, ';', '"', '');
+    }
 
-        $fields = str_getcsv($line, ';', '"', '');
+    $headerRepeats = count(array_filter(
+        $parsed,
+        static fn (array $f): bool => trim((string) ($f[0] ?? '')) === 'datum_zac'
+    ));
+    if ($headerRepeats > 0) {
+        $stats['errors'][] = sprintf(
+            'Soubor obsahuje hlavičku %d× — export se připisuje na konec souboru místo přepsání. Import odmítnut, zůstávají předchozí data.',
+            $headerRepeats + 1
+        );
+        return $stats;
+    }
+
+    $last = end($parsed);
+    if ($last !== false && count($last) < $columnCount) {
+        $stats['errors'][] = sprintf(
+            'Soubor je neúplný (poslední řádek má %d z %d sloupců) — pravděpodobně se nahrál během zápisu. Import odmítnut, zůstávají předchozí data.',
+            count($last),
+            $columnCount
+        );
+        return $stats;
+    }
+
+    $rows = [];
+    foreach ($parsed as $fields) {
         if (count($fields) < 5) {
             $stats['skipped']++;
             continue;
@@ -935,6 +970,7 @@ function importServiceOrdersCsv(PDO $db, string $csvPath, string $file = 'objedn
         $fabkod    = strtoupper(trim((string) ($fields[2] ?? '')));
         $vinkod    = strtoupper(trim((string) ($fields[3] ?? '')));
         $clientRaw = trim((string) ($fields[4] ?? ''));
+        $centerRaw = $centerIdx !== false ? trim((string) ($fields[$centerIdx] ?? '')) : '';
 
         $scheduledAt = pragueToUtc($dateRaw);
         if ($scheduledAt === false) {
@@ -962,14 +998,15 @@ function importServiceOrdersCsv(PDO $db, string $csvPath, string $file = 'objedn
             ':spz_o'        => $spzRaw !== '' ? mb_substr($spzRaw, 0, 20) : null,
             ':vin'          => $vin,
             ':client'       => $clientRaw !== '' ? mb_substr($clientRaw, 0, 100) : null,
+            ':center'       => $centerRaw !== '' ? mb_substr($centerRaw, 0, 20) : null,
         ];
     }
 
     $stmt = $db->prepare('
         INSERT INTO tel_service_orders
-            (source, scheduled_at, spz_normalized, spz_original, vin, client_name, imported_at)
+            (source, scheduled_at, spz_normalized, spz_original, vin, client_name, center_code, imported_at)
         VALUES
-            (:source, :scheduled_at, :spz_n, :spz_o, :vin, :client, :imported_at)
+            (:source, :scheduled_at, :spz_n, :spz_o, :vin, :client, :center, :imported_at)
     ');
     $now = nowUtc();
 
@@ -1020,7 +1057,7 @@ function pragueDayStartUtc(string $utc): string
  * Nadcházející objednávky (dnes a později) pro dané SPZ nebo VIN, seřazené podle termínu.
  * @param list<string> $spzs
  * @param list<string> $vins
- * @return list<array{spz:string,vin:string,scheduled_at:string,scheduled_at_local:string,client_name:string,source:string}>
+ * @return list<array{spz:string,vin:string,scheduled_at:string,scheduled_at_local:string,client_name:string,source:string,center_code:string}>
  */
 function getUpcomingServiceOrders(PDO $db, array $spzs, array $vins): array
 {
@@ -1042,7 +1079,7 @@ function getUpcomingServiceOrders(PDO $db, array $spzs, array $vins): array
     }
 
     $stmt = $db->prepare(
-        'SELECT spz_normalized, vin, scheduled_at, client_name, source
+        'SELECT spz_normalized, vin, scheduled_at, client_name, source, center_code
          FROM tel_service_orders
          WHERE scheduled_at >= ? AND (' . implode(' OR ', $conds) . ')
          ORDER BY scheduled_at ASC, source ASC'
@@ -1058,6 +1095,7 @@ function getUpcomingServiceOrders(PDO $db, array $spzs, array $vins): array
             'scheduled_at_local' => toLocalTime(arrStr($o, 'scheduled_at')),
             'client_name'        => arrStr($o, 'client_name'),
             'source'             => arrStr($o, 'source'),
+            'center_code'        => arrStr($o, 'center_code'),
         ];
     }
     return $out;
@@ -1068,8 +1106,8 @@ function getUpcomingServiceOrders(PDO $db, array $spzs, array $vins): array
  * U vyřízeného požadavku ($resolvedAtUtc) jen objednávky s datem >= datum vyřízení (pražský den).
  * Stejný termín pro stejné vozidlo ve více zdrojích (objednáno i příjem) se vrací jen jednou
  * (přednost má 'objednano' díky řazení podle source).
- * @param list<array{spz:string,vin:string,scheduled_at:string,scheduled_at_local:string,client_name:string,source:string}> $orders
- * @return list<array{scheduled_at_local:string,client_name:string,source:string}>
+ * @param list<array{spz:string,vin:string,scheduled_at:string,scheduled_at_local:string,client_name:string,source:string,center_code:string}> $orders
+ * @return list<array{scheduled_at_local:string,client_name:string,source:string,center_code:string}>
  */
 function matchServiceOrders(array $orders, string $spz, string $vin, ?string $resolvedAtUtc = null): array
 {
@@ -1090,8 +1128,29 @@ function matchServiceOrders(array $orders, string $spz, string $vin, ?string $re
                 'scheduled_at_local' => $o['scheduled_at_local'],
                 'client_name'        => $o['client_name'],
                 'source'             => $o['source'],
+                'center_code'        => $o['center_code'],
             ];
         }
+    }
+    return $out;
+}
+
+/**
+ * Doplní k objednávkám popisek střediska a příznak, že je vůz objednaný na jiném středisku,
+ * než kam patří pobočka požadavku (nápověda k přeřazení). Bez kódu na kterékoli straně se neporovnává.
+ * @param list<array{scheduled_at_local:string,client_name:string,source:string,center_code:string}> $orders
+ * @param array<string, string> $centerLabels  kód střediska → popisek (getCenterLabels)
+ * @return list<array{scheduled_at_local:string,client_name:string,source:string,center_code:string,center_label:string,other_center:bool}>
+ */
+function decorateServiceOrders(array $orders, string $requestCenter, array $centerLabels): array
+{
+    $out = [];
+    foreach ($orders as $o) {
+        $code  = $o['center_code'];
+        $out[] = $o + [
+            'center_label' => $code !== '' ? ($centerLabels[$code] ?? 'středisko ' . $code) : '',
+            'other_center' => $code !== '' && $requestCenter !== '' && $code !== $requestCenter,
+        ];
     }
     return $out;
 }
@@ -1272,4 +1331,209 @@ function syncAllServiceOrdersFromS3(string $source): array
         $out[$file] = syncServiceOrdersFromS3($source, $file);
     }
     return $out;
+}
+
+// ─── Pobočky (PRD 3.14) ──────────────────────────────────────────────────────
+
+/** Stavy, ze kterých lze požadavek přeřadit na jinou pobočku (nevyřízené). */
+const BRANCH_CHANGE_STATUSES = ['new', 'in_progress', 'pending', 'reopened'];
+
+/** Po kolika minutách od přijetí je důvod přeřazení povinný i u nepřevzatého požadavku. */
+const BRANCH_CHANGE_FREE_MINUTES = 10;
+
+/**
+ * Pobočky seřazené pro zobrazení.
+ * @return list<array{id:int,code:string,name:string,dms_center_code:string,is_active:bool,sort_order:int}>
+ */
+function getBranches(PDO $db, bool $activeOnly = false): array
+{
+    $stmt = $db->query(
+        'SELECT id, code, name, dms_center_code, is_active, sort_order
+         FROM tel_branches'
+        . ($activeOnly ? ' WHERE is_active = 1' : '')
+        . ' ORDER BY sort_order ASC, name ASC'
+    );
+    if ($stmt === false) {
+        return [];
+    }
+    $out = [];
+    foreach (pdoFetchAll($stmt) as $b) {
+        $out[] = [
+            'id'              => arrInt($b, 'id'),
+            'code'            => arrStr($b, 'code'),
+            'name'            => arrStr($b, 'name'),
+            'dms_center_code' => arrStr($b, 'dms_center_code'),
+            'is_active'       => arrInt($b, 'is_active') === 1,
+            'sort_order'      => arrInt($b, 'sort_order'),
+        ];
+    }
+    return $out;
+}
+
+/**
+ * ID poboček, ke kterým je uživatel přiřazen (plný přístup). Čte se z DB při každém volání,
+ * takže změna přiřazení v administraci platí okamžitě, bez nového přihlášení.
+ * @return list<int>
+ */
+function userBranchIds(PDO $db, int $userId): array
+{
+    $stmt = $db->prepare('SELECT branch_id FROM tel_user_branches WHERE user_id = ? ORDER BY branch_id');
+    $stmt->execute([$userId]);
+    return array_map(static fn (array $r): int => arrInt($r, 'branch_id'), pdoFetchAll($stmt));
+}
+
+/** Domovská pobočka uživatele (předvyplní se u nového požadavku); 0 = žádná. */
+function userDefaultBranchId(PDO $db, int $userId): int
+{
+    $stmt = $db->prepare('SELECT default_branch_id FROM tel_users WHERE id = ?');
+    $stmt->execute([$userId]);
+    $row = pdoFetch($stmt);
+    return $row !== false ? arrInt($row, 'default_branch_id') : 0;
+}
+
+/**
+ * Úroveň přístupu uživatele k požadavku (PRD 3.14.2):
+ * 'full' = člen pobočky požadavku nebo admin, 'creator' = autor požadavku z jiné pobočky, 'none' = bez přístupu.
+ * @param array<string, mixed> $req
+ * @param list<int> $branchIds
+ */
+function requestAccessLevel(array $req, int $userId, bool $isAdmin, array $branchIds): string
+{
+    if ($isAdmin || in_array(arrInt($req, 'branch_id'), $branchIds, true)) {
+        return 'full';
+    }
+    if ($userId > 0 && arrInt($req, 'created_by') === $userId) {
+        return 'creator';
+    }
+    return 'none';
+}
+
+/**
+ * SQL podmínka viditelnosti požadavků ve výpisu pro uživatele, který není admin:
+ * požadavky jeho poboček + nevyřízené požadavky, které sám založil pro jinou pobočku.
+ * @param list<int> $branchIds
+ * @return array{0:string,1:list<int>}
+ */
+function branchVisibilityCondition(array $branchIds, int $userId): array
+{
+    $ownForeign = "(r.created_by = ? AND r.status != 'resolved')";
+    if ($branchIds === []) {
+        return [$ownForeign, [$userId]];
+    }
+    $in = implode(',', array_fill(0, count($branchIds), '?'));
+    return ["(r.branch_id IN ($in) OR $ownForeign)", [...$branchIds, $userId]];
+}
+
+/**
+ * Je u přeřazení povinný důvod? Ano, pokud je požadavek převzatý nebo starší než BRANCH_CHANGE_FREE_MINUTES
+ * (bez důvodu jde jen rychlá oprava hned po uložení).
+ * @param array<string, mixed> $req
+ */
+function branchChangeNeedsReason(array $req): bool
+{
+    return arrInt($req, 'assigned_to_id') > 0
+        || ageMinutes(arrStr($req, 'created_at')) >= BRANCH_CHANGE_FREE_MINUTES;
+}
+
+/**
+ * Ověří přeřazení požadavku na jinou pobočku. Vrací chybovou hlášku, nebo null, když je vše v pořádku.
+ * @param array<string, mixed> $req
+ * @param array<string, mixed>|false $target  řádek tel_branches (false = neexistuje)
+ */
+function validateBranchChange(array $req, array|false $target, string $reason): ?string
+{
+    if (!in_array(arrStr($req, 'status'), BRANCH_CHANGE_STATUSES, true)) {
+        return 'Vyřízený požadavek nelze přeřadit — nejdřív ho znovu otevřete';
+    }
+    if ($target === false || arrInt($target, 'is_active') !== 1) {
+        return 'Cílová pobočka neexistuje nebo není aktivní';
+    }
+    if (arrInt($target, 'id') === arrInt($req, 'branch_id')) {
+        return 'Požadavek už na této pobočce je';
+    }
+    if ($reason === '' && branchChangeNeedsReason($req)) {
+        return 'Uveďte důvod přeřazení';
+    }
+    if (mb_strlen($reason) > 500) {
+        return 'Důvod přeřazení může mít nejvýše 500 znaků';
+    }
+    return null;
+}
+
+/**
+ * Přeřadí požadavek na jinou pobočku: na cílové pobočce se chová jako nový, nepřevzatý
+ * (status 'new', bez technika). created_at, poznámka technika i důvody zůstávají. Vše v jedné transakci s auditem.
+ * @param array<string, mixed> $req
+ */
+function applyBranchChange(PDO $db, array $req, int $toBranchId, int $userId, string $reason, string $now): void
+{
+    $reqId       = arrInt($req, 'id');
+    $oldStatus   = arrStr($req, 'status');
+    $oldAssigned = arrInt($req, 'assigned_to_id');
+
+    $db->beginTransaction();
+    try {
+        $db->prepare(
+            "UPDATE tel_requests
+             SET branch_id = ?, status = 'new', assigned_to_id = NULL, assigned_at = NULL, updated_at = ?
+             WHERE id = ?"
+        )->execute([$toBranchId, $now, $reqId]);
+
+        logAudit($db, $reqId, $userId, 'branch_changed', 'branch_id', (string) arrInt($req, 'branch_id'), (string) $toBranchId);
+        if ($oldStatus !== 'new') {
+            logAudit($db, $reqId, $userId, 'status_change', 'status', $oldStatus, 'new');
+        }
+        if ($oldAssigned > 0) {
+            logAudit($db, $reqId, $userId, 'field_edit', 'assigned_to_id', (string) $oldAssigned, null);
+        }
+        if ($reason !== '') {
+            logAudit($db, $reqId, $userId, 'field_edit', 'branch_change_reason', null, $reason);
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        throw $e;
+    }
+}
+
+/**
+ * Popisky středisek DMS pro zobrazení u objednávek plánovače: kód → název.
+ * @return array<string, string>
+ */
+function getCenterLabels(PDO $db): array
+{
+    $byCenter = [];
+    foreach (getBranches($db) as $b) {
+        if ($b['dms_center_code'] !== '') {
+            $byCenter[$b['dms_center_code']][] = $b['name'];
+        }
+    }
+    $out = [];
+    foreach ($byCenter as $code => $names) {
+        $out[(string) $code] = centerLabel((string) $code, $names);
+    }
+    return $out;
+}
+
+/**
+ * Popisek střediska: středisko s jedinou pobočkou dostane její název, sdílené středisko
+ * společný začátek názvů („Borek – servis“ + „Borek – lakovna“ → „Borek“).
+ * @param list<string> $branchNames  názvy poboček sdílejících středisko
+ */
+function centerLabel(string $centerCode, array $branchNames): string
+{
+    if ($branchNames === []) {
+        return 'středisko ' . $centerCode;
+    }
+    if (count($branchNames) === 1) {
+        return $branchNames[0];
+    }
+    $prefix = $branchNames[0];
+    foreach ($branchNames as $name) {
+        while ($prefix !== '' && !str_starts_with($name, $prefix)) {
+            $prefix = mb_substr($prefix, 0, -1);
+        }
+    }
+    $prefix = (string) preg_replace('/[\s\x{2013}\-,\/]+$/u', '', $prefix);
+    return $prefix !== '' ? $prefix : 'středisko ' . $centerCode;
 }

@@ -21,16 +21,21 @@ $fromUtc = (new DateTime($from . ' 00:00:00', new DateTimeZone('Europe/Prague'))
 $toUtc   = (new DateTime($to . ' 23:59:59', new DateTimeZone('Europe/Prague')))
     ->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d H:i:s');
 
+// Volitelný filtr pobočky (0 = všechny). Požadavek se počítá pobočce, kde je aktuálně (PRD 4.3).
+$branch = arrInt($_GET, 'branch');
+
 switch ($view) {
     case 'by_technician':
-        handleByTechnician($fromUtc, $toUtc);
+        handleByTechnician($fromUtc, $toUtc, $branch);
     case 'by_age':
-        handleByAge($fromUtc, $toUtc);
+        handleByAge($fromUtc, $toUtc, $branch);
+    case 'by_branch':
+        handleByBranch($fromUtc, $toUtc);
     default:
-        jsonErr('Neznámý pohled. Použijte: by_technician, by_age');
+        jsonErr('Neznámý pohled. Použijte: by_technician, by_age, by_branch');
 }
 
-function handleByTechnician(string $from, string $to): never
+function handleByTechnician(string $from, string $to, int $branch): never
 {
     $stmt = getDB()->prepare(
         'SELECT u.name,
@@ -42,14 +47,44 @@ function handleByTechnician(string $from, string $to): never
          WHERE r.status = \'resolved\'
            AND r.deleted_at IS NULL
            AND r.resolved_at BETWEEN ? AND ?
+           AND (? = 0 OR r.branch_id = ?)
          GROUP BY u.id, u.name
          ORDER BY total_resolved DESC'
     );
-    $stmt->execute([$from, $to]);
+    $stmt->execute([$from, $to, $branch, $branch]);
     jsonOk($stmt->fetchAll());
 }
 
-function handleByAge(string $from, string $to): never
+/**
+ * Podle poboček: přijaté a vyřízené požadavky, průměrná doba vyřízení, přeřazení odjinud a jinam.
+ */
+function handleByBranch(string $from, string $to): never
+{
+    $stmt = getDB()->prepare(
+        "SELECT b.code, b.name, b.is_active,
+                (SELECT COUNT(*) FROM tel_requests r
+                  WHERE r.branch_id = b.id AND r.deleted_at IS NULL
+                    AND r.created_at BETWEEN ? AND ?) AS created_count,
+                (SELECT COUNT(*) FROM tel_requests r
+                  WHERE r.branch_id = b.id AND r.deleted_at IS NULL AND r.status = 'resolved'
+                    AND r.resolved_at BETWEEN ? AND ?) AS resolved_count,
+                (SELECT ROUND(AVG(TIMESTAMPDIFF(MINUTE, r.created_at, r.resolved_at))) FROM tel_requests r
+                  WHERE r.branch_id = b.id AND r.deleted_at IS NULL AND r.status = 'resolved'
+                    AND r.resolved_at BETWEEN ? AND ?) AS avg_minutes,
+                (SELECT COUNT(*) FROM tel_request_history h
+                  WHERE h.action = 'branch_changed' AND CAST(h.new_value AS UNSIGNED) = b.id
+                    AND h.created_at BETWEEN ? AND ?) AS moved_in,
+                (SELECT COUNT(*) FROM tel_request_history h
+                  WHERE h.action = 'branch_changed' AND CAST(h.old_value AS UNSIGNED) = b.id
+                    AND h.created_at BETWEEN ? AND ?) AS moved_out
+         FROM tel_branches b
+         ORDER BY b.sort_order ASC, b.name ASC"
+    );
+    $stmt->execute([$from, $to, $from, $to, $from, $to, $from, $to, $from, $to]);
+    jsonOk($stmt->fetchAll());
+}
+
+function handleByAge(string $from, string $to, int $branch): never
 {
     $settings = getSettings();
     $t1 = (int)($settings['color_level_1'] ?? 15);
@@ -62,9 +97,10 @@ function handleByAge(string $from, string $to): never
          FROM tel_requests
          WHERE status = \'resolved\'
            AND deleted_at IS NULL
-           AND resolved_at BETWEEN ? AND ?'
+           AND resolved_at BETWEEN ? AND ?
+           AND (? = 0 OR branch_id = ?)'
     );
-    $stmt->execute([$from, $to]);
+    $stmt->execute([$from, $to, $branch, $branch]);
     $rows = $stmt->fetchAll();
 
     $buckets = [

@@ -36,6 +36,7 @@ touchSession();
     </a>
     <div class="ms-auto d-flex gap-2">
         <a href="../dashboard.php" class="btn btn-sm btn-outline-light">Přehled</a>
+        <a href="branches.php" class="btn btn-sm btn-outline-light">Pobočky</a>
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
@@ -64,13 +65,14 @@ touchSession();
                         <th>E-mail</th>
                         <th>Role</th>
                         <th>Stav</th>
+                        <th>Pobočky</th>
                         <th>Znovuotevření</th>
                         <th>Poslední přihlášení</th>
                         <th></th>
                     </tr>
                 </thead>
                 <tbody id="usersTable">
-                    <tr><td colspan="6" class="text-center py-3">
+                    <tr><td colspan="8" class="text-center py-3">
                         <div class="spinner-border spinner-border-sm"></div>
                     </td></tr>
                 </tbody>
@@ -99,6 +101,7 @@ touchSession();
                         <label class="form-label">E-mail</label>
                         <input type="email" class="form-control" name="email" required>
                     </div>
+                    <div class="branch-picker"></div>
                 </form>
             </div>
             <div class="modal-footer">
@@ -135,6 +138,7 @@ touchSession();
                             <option value="admin">Admin</option>
                         </select>
                     </div>
+                    <div class="branch-picker"></div>
                     <div class="mb-3">
                         <div class="form-check">
                             <input class="form-check-input" type="checkbox" name="can_reopen"
@@ -158,6 +162,7 @@ touchSession();
 <script>
 const CSRF = '<?= h(arrStr($_SESSION, 'csrf_token')) ?>';
 const API  = '<?= APP_URL ?>/admin/api/users.php';
+const BRANCHES = <?= json_encode(getBranches(getDB()), JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="<?= assetUrl('assets/js/admin.js') ?>"></script>

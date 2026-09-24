@@ -36,6 +36,90 @@ switch ($action) {
         jsonErr('Neznámá akce', 400);
 }
 
+// ─── Přístup podle poboček (PRD 3.14) ────────────────────────────────────────
+
+/** @return list<int> */
+function currentBranchIds(): array
+{
+    static $ids = null;
+    if ($ids === null) {
+        $ids = userBranchIds(getDB(), currentUserId());
+    }
+    return $ids;
+}
+
+/** @param array<string, mixed> $req */
+function accessTo(array $req): string
+{
+    return requestAccessLevel($req, currentUserId(), isAdmin(), currentBranchIds());
+}
+
+/**
+ * Doplní k řádku požadavku odvozená pole pro frontend (časy, značka, objednávky, přístup).
+ * @param array<string, mixed> $row
+ * @param list<array{spz:string,vin:string,scheduled_at:string,scheduled_at_local:string,client_name:string,source:string,center_code:string}> $orders
+ * @param array<string, string> $centerLabels
+ * @return array<string, mixed>
+ */
+function decorateRequestRow(array $row, array $orders, array $centerLabels): array
+{
+    $row['age_minutes']      = ageMinutes(arrStr($row, 'created_at'));
+    $row['created_at_local'] = toLocalTime(arrStr($row, 'created_at'));
+    $row['updated_at_local'] = toLocalTime(arrStr($row, 'updated_at'));
+    foreach (['resolved_at', 'deleted_at', 'assigned_at'] as $field) {
+        $value = arrStrNull($row, $field);
+        if ($value !== null) {
+            $row[$field . '_local'] = toLocalTime($value);
+        }
+    }
+    $row['vehicle_brand'] = vinToBrand(arrStr($row, 'vehicle_vin'));
+    $resolvedAt = arrStrNull($row, 'resolved_at');
+    $row['service_orders'] = decorateServiceOrders(
+        matchServiceOrders($orders, arrStr($row, 'spz'), arrStr($row, 'vehicle_vin'), $resolvedAt),
+        arrStr($row, 'branch_center'),
+        $centerLabels
+    );
+    if ($resolvedAt !== null) {
+        $row['resolution_minutes'] = (int) round(
+            (strtotime($resolvedAt) - strtotime(arrStr($row, 'created_at'))) / 60
+        );
+    }
+    $row['access'] = accessTo($row);
+    return $row;
+}
+
+/** Společný SELECT požadavku s joiny (SMS, uživatelé, vozidlo, pobočka, poslední přeřazení). */
+function requestSelectSql(): string
+{
+    return "SELECT r.*,
+           COALESCE(s.sms_count, 0) AS sms_count,
+           COALESCE(s.sms_sent,  0) AS sms_sent,
+           u1.name AS created_by_name,
+           u2.name AS assigned_to_name,
+           v.model AS vehicle_model,
+           v.year  AS vehicle_year,
+           v.vin   AS vehicle_vin,
+           b.code  AS branch_code,
+           b.name  AS branch_name,
+           b.dms_center_code AS branch_center,
+           (SELECT mf.code
+              FROM tel_request_history h
+              JOIN tel_branches mf ON mf.id = CAST(h.old_value AS UNSIGNED)
+             WHERE h.request_id = r.id AND h.action = 'branch_changed'
+             ORDER BY h.id DESC LIMIT 1) AS moved_from_code
+    FROM tel_requests r
+    LEFT JOIN (
+        SELECT request_id,
+               COUNT(*) AS sms_count,
+               SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sms_sent
+        FROM tel_sms_queue GROUP BY request_id
+    ) s ON s.request_id = r.id
+    LEFT JOIN tel_users u1 ON r.created_by     = u1.id
+    LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
+    LEFT JOIN tel_vehicles v ON v.spz_normalized = r.spz
+    LEFT JOIN tel_branches b ON b.id = r.branch_id";
+}
+
 // ─── GET list ─────────────────────────────────────────────────────────────────
 
 function handleList(): never
@@ -72,6 +156,20 @@ function handleList(): never
         }
     }
 
+    // Viditelnost podle poboček: admin vše, ostatní své pobočky + vlastní požadavky z jiných poboček
+    if (!isAdmin()) {
+        [$branchCond, $branchParams] = branchVisibilityCondition(currentBranchIds(), currentUserId());
+        $where[] = $branchCond;
+        array_push($params, ...$branchParams);
+    }
+
+    // Filtr jedné pobočky (přepínač na dashboardu)
+    $branchFilter = arrInt($_GET, 'branch');
+    if ($branchFilter > 0) {
+        $where[]  = 'r.branch_id = ?';
+        $params[] = $branchFilter;
+    }
+
     if ($search !== '') {
         $like     = '%' . $search . '%';
         $where[]  = '(r.spz LIKE ? OR r.client_name LIKE ? OR r.client_phone LIKE ?)';
@@ -81,28 +179,7 @@ function handleList(): never
     }
 
     $whereStr = implode(' AND ', $where);
-    $sql = "SELECT r.*,
-                   COALESCE(s.sms_count, 0) AS sms_count,
-                   COALESCE(s.sms_sent,  0) AS sms_sent,
-                   u1.name AS created_by_name,
-                   u2.name AS assigned_to_name,
-                   v.model AS vehicle_model,
-                   v.year  AS vehicle_year,
-                   v.vin   AS vehicle_vin
-            FROM tel_requests r
-            LEFT JOIN (
-                SELECT request_id,
-                       COUNT(*) AS sms_count,
-                       SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sms_sent
-                FROM tel_sms_queue GROUP BY request_id
-            ) s ON s.request_id = r.id
-            LEFT JOIN tel_users u1 ON r.created_by     = u1.id
-            LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
-            LEFT JOIN tel_vehicles v ON v.spz_normalized = r.spz
-            WHERE $whereStr
-            ORDER BY r.created_at $sort";
-
-    $stmt = $db->prepare($sql);
+    $stmt = $db->prepare(requestSelectSql() . " WHERE $whereStr ORDER BY r.created_at $sort");
     $stmt->execute($params);
     $rows = pdoFetchAll($stmt);
 
@@ -111,29 +188,12 @@ function handleList(): never
         array_map(static fn (array $r): string => arrStr($r, 'spz'), $rows),
         array_map(static fn (array $r): string => arrStr($r, 'vehicle_vin'), $rows)
     );
+    $centerLabels = getCenterLabels($db);
 
-    foreach ($rows as &$row) {
-        $row['age_minutes']  = ageMinutes(arrStr($row, 'created_at'));
-        $row['created_at_local'] = toLocalTime(arrStr($row, 'created_at'));
-        $row['updated_at_local'] = toLocalTime(arrStr($row, 'updated_at'));
-        foreach (['resolved_at', 'deleted_at', 'assigned_at'] as $field) {
-            $value = arrStrNull($row, $field);
-            if ($value !== null) {
-                $row[$field . '_local'] = toLocalTime($value);
-            }
-        }
-        $row['vehicle_brand']  = vinToBrand(arrStr($row, 'vehicle_vin'));
-        $resolvedAt = arrStrNull($row, 'resolved_at');
-        $row['service_orders'] = matchServiceOrders($orders, arrStr($row, 'spz'), arrStr($row, 'vehicle_vin'), $resolvedAt);
-        if ($resolvedAt !== null) {
-            $row['resolution_minutes'] = (int) round(
-                (strtotime($resolvedAt) - strtotime(arrStr($row, 'created_at'))) / 60
-            );
-        }
-    }
-    unset($row);
-
-    jsonOk($rows);
+    jsonOk(array_map(
+        static fn (array $row): array => decorateRequestRow($row, $orders, $centerLabels),
+        $rows
+    ));
 }
 
 // ─── GET single ───────────────────────────────────────────────────────────────
@@ -146,62 +206,22 @@ function handleGet(): never
     }
 
     $db = getDB();
-    $stmt = $db->prepare(
-        'SELECT r.*,
-                COALESCE(s.sms_count, 0) AS sms_count,
-                COALESCE(s.sms_sent,  0) AS sms_sent,
-                u1.name AS created_by_name,
-                u2.name AS assigned_to_name,
-                v.model AS vehicle_model,
-                v.year  AS vehicle_year,
-                v.vin   AS vehicle_vin
-         FROM tel_requests r
-         LEFT JOIN (
-             SELECT request_id,
-                    COUNT(*) AS sms_count,
-                    SUM(CASE WHEN status = \'sent\' THEN 1 ELSE 0 END) AS sms_sent
-             FROM tel_sms_queue GROUP BY request_id
-         ) s ON s.request_id = r.id
-         LEFT JOIN tel_users u1 ON r.created_by     = u1.id
-         LEFT JOIN tel_users u2 ON r.assigned_to_id = u2.id
-         LEFT JOIN tel_vehicles v ON v.spz_normalized = r.spz
-         WHERE r.id = ?
-         LIMIT 1'
-    );
+    $stmt = $db->prepare(requestSelectSql() . ' WHERE r.id = ? LIMIT 1');
     $stmt->execute([$id]);
     $row = pdoFetch($stmt);
 
     if (!$row) {
         jsonErr('Požadavek nenalezen', 404);
     }
+    if (accessTo($row) === 'none') {
+        jsonErr('Požadavek patří pobočce, ke které nemáte přístup', 403);
+    }
 
-    $row['age_minutes']      = ageMinutes(arrStr($row, 'created_at'));
-    $row['created_at_local'] = toLocalTime(arrStr($row, 'created_at'));
-    $row['updated_at_local'] = toLocalTime(arrStr($row, 'updated_at'));
-    $resolvedAt = arrStrNull($row, 'resolved_at');
-    if ($resolvedAt !== null) {
-        $row['resolved_at_local'] = toLocalTime($resolvedAt);
-    }
-    $assignedAt = arrStrNull($row, 'assigned_at');
-    if ($assignedAt !== null) {
-        $row['assigned_at_local'] = toLocalTime($assignedAt);
-    }
-    $deletedAt = arrStrNull($row, 'deleted_at');
-    if ($deletedAt !== null) {
-        $row['deleted_at_local'] = toLocalTime($deletedAt);
-    }
-    $row['vehicle_brand']  = vinToBrand(arrStr($row, 'vehicle_vin'));
-    $row['service_orders'] = matchServiceOrders(
+    $row = decorateRequestRow(
+        $row,
         getUpcomingServiceOrders($db, [arrStr($row, 'spz')], [arrStr($row, 'vehicle_vin')]),
-        arrStr($row, 'spz'),
-        arrStr($row, 'vehicle_vin'),
-        $resolvedAt
+        getCenterLabels($db)
     );
-    if ($resolvedAt !== null) {
-        $row['resolution_minutes'] = (int) round(
-            (strtotime($resolvedAt) - strtotime(arrStr($row, 'created_at'))) / 60
-        );
-    }
 
     // Historie (posledních 20)
     $hStmt = $db->prepare(
@@ -209,13 +229,26 @@ function handleGet(): never
          FROM tel_request_history h
          JOIN tel_users u ON h.user_id = u.id
          WHERE h.request_id = ?
-         ORDER BY h.created_at DESC
+         ORDER BY h.created_at DESC, h.id DESC
          LIMIT 20'
     );
     $hStmt->execute([$id]);
     $history = pdoFetchAll($hStmt);
+    $branchLabels = [];
+    foreach (getBranches($db) as $b) {
+        $branchLabels[(string) $b['id']] = $b['code'] . ' – ' . $b['name'];
+    }
     foreach ($history as &$h) {
         $h['created_at_local'] = toLocalTime(arrStr($h, 'created_at'));
+        // Přeřazení: místo ID poboček ukázat kód a název
+        if (arrStr($h, 'field_name') === 'branch_id') {
+            foreach (['old_value', 'new_value'] as $col) {
+                $v = arrStr($h, $col);
+                if ($v !== '') {
+                    $h[$col] = $branchLabels[$v] ?? $v;
+                }
+            }
+        }
     }
     unset($h);
 
@@ -251,13 +284,25 @@ function handleCreate(): never
     $userId  = currentUserId();
 
     $db = getDB();
+
+    // Pobočka: zadavatel volí libovolnou aktivní pobočku; bez přiřazené pobočky nelze zakládat
+    if (!isAdmin() && currentBranchIds() === []) {
+        jsonErr('Nemáte přiřazenou pobočku, kontaktujte administrátora.', 403);
+    }
+    $branchId = arrInt($body, 'branch_id');
+    $bStmt    = $db->prepare('SELECT id FROM tel_branches WHERE id = ? AND is_active = 1');
+    $bStmt->execute([$branchId]);
+    if (!pdoFetch($bStmt)) {
+        jsonErr('Vyberte pobočku, která bude požadavek řešit');
+    }
+
     $db->beginTransaction();
     try {
         $stmt = $db->prepare(
             'INSERT INTO tel_requests
                 (spz, client_name, client_phone, client_email, request_text,
-                 status, created_by, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, \'new\', ?, ?, ?)'
+                 status, branch_id, created_by, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, \'new\', ?, ?, ?, ?)'
         );
         $stmt->execute([
             $spzNorm,
@@ -265,6 +310,7 @@ function handleCreate(): never
             $clientPhone ?: null,
             $clientEmail ?: null,
             $requestText,
+            $branchId,
             $userId,
             $now,
             $now,
@@ -329,6 +375,15 @@ function handleUpdate(): never
         jsonErr('Požadavek nenalezen', 404);
     }
 
+    // Přístup podle pobočky: autor z jiné pobočky smí jen přeřadit a opravit údaje (PRD 3.14.2)
+    $access = accessTo($req);
+    if ($access === 'none') {
+        jsonErr('Požadavek patří pobočce, ke které nemáte přístup', 403);
+    }
+    if ($access === 'creator' && !in_array($actionType, ['change_branch', 'edit_contact'], true)) {
+        jsonErr('Požadavek patří jiné pobočce — můžete ho jen přeřadit nebo opravit údaje.', 403);
+    }
+
     // Race condition check
     if ($expectedAt !== '' && $req['updated_at'] !== $expectedAt) {
         $editor = arrStr($req, 'assigned_to_name', 'někdo jiný');
@@ -358,7 +413,9 @@ function handleUpdate(): never
         case 'edit_field':
             handleEditField($db, $req, $userId, $now, $body);
         case 'edit_contact':
-            handleEditContact($db, $req, $userId, $now, $body);
+            handleEditContact($db, $req, $userId, $now, $body, $access);
+        case 'change_branch':
+            handleChangeBranch($db, $req, $userId, $now, $body);
         case 'soft_delete':
             handleSoftDelete($db, $req, $userId, $now);
         case 'restore':
@@ -654,19 +711,32 @@ function handleEditField(PDO $db, array $req, int $userId, string $now, array $b
 // ── edit_contact ──────────────────────────────────────────────────────────────
 
 /**
+ * „Opravit údaje“ — SPZ, jméno, telefon, e-mail (PRD 3.9). Každé změněné pole se loguje zvlášť.
+ * SPZ je volitelná v těle požadavku (starší klient ji neposílá).
  * @param array<string, mixed> $req
  * @param array<string, mixed> $body
  */
-function handleEditContact(PDO $db, array $req, int $userId, string $now, array $body): never
+function handleEditContact(PDO $db, array $req, int $userId, string $now, array $body, string $access): never
 {
     if ($req['status'] === 'resolved') {
         jsonErr('Kontaktní údaje nelze upravovat u vyřízených požadavků');
+    }
+    if ($access === 'creator' && $req['status'] !== 'new') {
+        jsonErr('Požadavek už řeší jiná pobočka — údaje může opravit jen ona.', 403);
     }
 
     $name  = trim(arrStr($body, 'client_name'));
     $phone = trim(arrStr($body, 'client_phone'));
     $email = trim(arrStr($body, 'client_email'));
+    $oldSpz = arrStr($req, 'spz');
+    $spz    = array_key_exists('spz', $body) ? normalizeSpz(trim(arrStr($body, 'spz'))) : $oldSpz;
 
+    if ($spz === '') {
+        jsonErr('SPZ nesmí být prázdná');
+    }
+    if (mb_strlen($spz) > 20) {
+        jsonErr('SPZ může mít nejvýše 20 znaků');
+    }
     if ($name === '') {
         jsonErr('Jméno klienta nesmí být prázdné');
     }
@@ -682,9 +752,12 @@ function handleEditContact(PDO $db, array $req, int $userId, string $now, array 
     $db->beginTransaction();
     try {
         $db->prepare(
-            'UPDATE tel_requests SET client_name = ?, client_phone = ?, client_email = ?, updated_at = ? WHERE id = ?'
-        )->execute([$name, $phone ?: null, $email ?: null, $now, $reqId]);
+            'UPDATE tel_requests SET spz = ?, client_name = ?, client_phone = ?, client_email = ?, updated_at = ? WHERE id = ?'
+        )->execute([$spz, $name, $phone ?: null, $email ?: null, $now, $reqId]);
 
+        if ($spz !== $oldSpz) {
+            logAudit($db, $reqId, $userId, 'field_edit', 'spz', $oldSpz, $spz);
+        }
         if ($name !== $oldName) {
             logAudit($db, $reqId, $userId, 'field_edit', 'client_name', $oldName ?: null, $name);
         }
@@ -702,6 +775,49 @@ function handleEditContact(PDO $db, array $req, int $userId, string $now, array 
     }
 
     jsonOk(['id' => $reqId]);
+}
+
+// ── change_branch ─────────────────────────────────────────────────────────────
+
+/**
+ * Přeřazení na jinou pobočku (PRD 3.14.4). Požadavek se na cílové pobočce chová jako nový, nepřevzatý.
+ * @param array<string, mixed> $req
+ * @param array<string, mixed> $body
+ */
+function handleChangeBranch(PDO $db, array $req, int $userId, string $now, array $body): never
+{
+    $toId   = arrInt($body, 'branch_id');
+    $reason = trim(arrStr($body, 'reason'));
+
+    $stmt = $db->prepare('SELECT id, code, name, is_active FROM tel_branches WHERE id = ?');
+    $stmt->execute([$toId]);
+    $target = pdoFetch($stmt);
+
+    $error = validateBranchChange($req, $target, $reason);
+    if ($error !== null || $target === false) {
+        jsonErr($error ?? 'Cílová pobočka neexistuje');
+    }
+
+    try {
+        applyBranchChange($db, $req, $toId, $userId, $reason, $now);
+    } catch (Throwable $e) {
+        appLog('change_branch error: ' . $e->getMessage());
+        jsonErr('Chyba při ukládání', 500);
+    }
+
+    jsonOk([
+        'id'            => arrInt($req, 'id'),
+        'branch_id'     => $toId,
+        'branch_code'   => arrStr($target, 'code'),
+        'branch_name'   => arrStr($target, 'name'),
+        // Uživatel, který není členem cílové pobočky ani autorem, požadavek po přeřazení neuvidí
+        'still_visible' => requestAccessLevel(
+            ['branch_id' => $toId, 'created_by' => $req['created_by'] ?? null],
+            $userId,
+            isAdmin(),
+            currentBranchIds()
+        ) !== 'none',
+    ]);
 }
 
 // ── soft_delete ───────────────────────────────────────────────────────────────

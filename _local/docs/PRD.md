@@ -1,6 +1,6 @@
 # PRD – Evidenční systém telefonických požadavků AutoBorek
 
-**Verze:** 1.8 (pobočky – schválený návrh, před implementací)  
+**Verze:** 1.8 (pobočky)  
 **Datum:** 2026-09-23  
 **Adresa aplikace:** https://tel.auto-borek.cz  
 **Administrace:** https://tel.auto-borek.cz/admin/  
@@ -20,7 +20,7 @@
 | 1.5   | 2026-06-26 | Barevné rozlišení vyřízených požadavků podle doby řešení (ne stáří); lookup vozidla při zadávání nového požadavku (blur na SPZ); statistiky podle doby vyřízení doplněny o procentuální podíl |
 | 1.6   | 2026-07-03 | Editace jména a e-mailu uživatele v admin správě uživatelů |
 | 1.7   | 2026-09-18 | Plánovač – objednávky do servisu: tabulka `tel_service_orders` plněná ze dvou S3 souborů (`planovac-objednano.csv`, `planovac-prijem.csv`); termín objednání + jméno zákazníka na kartě požadavku a v detailu; nová admin stránka Objednávky; jeden cron endpoint pro vozidla i objednávky; sjednocená S3 sync logika; nové rozložení karty (2 sloupce, poznámka technika vpravo nahoře) |
-| 1.8   | 2026-09-23 | **Pobočky** (schválený návrh): číselník `tel_branches`, přiřazení uživatelů k pobočkám M:N + domovská pobočka, `tel_requests.branch_id`; viditelnost požadavků podle pobočky + zadavatelský přístup; přeřazení na jinou pobočku (návrat do stavu `new`, audit); tlačítko „Opravit údaje“ včetně SPZ; filtr a badge pobočky na dashboardu; admin stránka Pobočky; statistiky podle poboček; středisko DMS u objednávek plánovače (vazba pobočka → středisko N:1) |
+| 1.8   | 2026-09-23 | **Pobočky**: číselník `tel_branches`, přiřazení uživatelů k pobočkám M:N + domovská pobočka, `tel_requests.branch_id`; viditelnost požadavků podle pobočky + zadavatelský přístup; přeřazení na jinou pobočku (návrat do stavu `new`, audit); tlačítko „Opravit údaje“ včetně SPZ; filtr a badge pobočky na dashboardu; admin stránka Pobočky; statistiky podle poboček; středisko DMS u objednávek plánovače (vazba pobočka → středisko N:1) |
 
 ---
 
@@ -262,7 +262,7 @@ Když je vozidlo z požadavku objednané do servisu, technik to vidí přímo na
 
 Firma má více poboček. Každý požadavek patří právě jedné pobočce. Uživatelé vidí požadavky svých poboček a zadavatel volí, které pobočce požadavek přidělí.
 
-**Pobočky při spuštění (3):**
+**Pobočky při spuštění (3, kódy BOREK / LAKOVNA / TABOR; aktivní zatím jen BOREK, ostatní se zapnou v administraci):**
 
 | Pobočka           | Středisko DMS (`dms_center_code`) |
 |-------------------|-----------------------------------|
@@ -302,7 +302,7 @@ Tyto karty jsou vizuálně tlumené, mají ikonu „zadal jsem“ a **nemají tl
 #### 3.14.4 Přeřazení na jinou pobočku (`action_type=change_branch`)
 
 - **Kdo:** kdokoli s plným nebo zadavatelským přístupem.
-- **Kdy:** ve stavech `new`, `in_progress` a `pending`. Vyřízený požadavek (`resolved`) je potřeba nejdřív znovu otevřít. Přeřazení na stejnou pobočku se odmítne.
+- **Kdy:** ve stavech `new`, `in_progress`, `pending` a `reopened`. Vyřízený požadavek (`resolved`) je potřeba nejdřív znovu otevřít. Přeřazení na stejnou pobočku se odmítne.
 - **Efekt:** `branch_id` = cílová pobočka, `status = 'new'`, `assigned_to_id = NULL`, `assigned_at = NULL`. Požadavek se na cílové pobočce chová jako nový, nepřevzatý.
   - Zachovává se `created_at`, tedy stáří a barva naléhavosti, protože klient čeká od prvního hovoru. SLA a statistiky se nemění.
   - Zachovává se poznámka technika jako informace pro cílovou pobočku.
@@ -323,8 +323,9 @@ Tyto karty jsou vizuálně tlumené, mají ikonu „zadal jsem“ a **nemají tl
 
 - Viditelnost se kontroluje **na serveru** při každém volání. Filtr v UI je jen pohodlí.
 - `userBranchIds()` načítá pobočky uživatele z DB při každém API volání (neukládá se do session), takže změna od admina platí okamžitě.
-- `requireBranchAccess($req, $level)` se volá v `handleGet`, ve všech akcích `handleUpdate`, v `api/sms.php` (enqueue, list) a u historie. Ochrana proti IDOR: bez ní by šel cizí požadavek otevřít změnou `id`.
-- Výpis: `WHERE (r.branch_id IN (:moje_pobocky) OR r.created_by = :ja)`. Admin je bez omezení.
+- `requestAccessLevel()` (`full` / `creator` / `none`) se kontroluje v `handleGet`, ve všech akcích `handleUpdate` a v `api/sms.php`. Ochrana proti IDOR: bez ní by šel cizí požadavek otevřít změnou `id`.
+- Výpis: `branchVisibilityCondition()` → `(r.branch_id IN (:moje_pobocky) OR (r.created_by = :ja AND r.status != 'resolved'))`. Admin je bez omezení.
+- SMS: poslat SMS k požadavku smí jen plný přístup (pobočka požadavku nebo admin). Historii SMS vidí i zadavatel. SMS bez vazby na požadavek smí poslat jen admin.
 - Integrační test `tests/Integration/BranchAccessTest.php`.
 
 #### 3.14.7 Migrace stávajících dat
@@ -466,9 +467,15 @@ Oba soubory mají stejnou strukturu: `datum_zac;spz;fabkod;vinkod;klient` (Windo
 
 **Středisko (v1.8):**
 - Oba soubory dostanou nový sloupec s kódem střediska DMS (`3` = Borek, `33` = Tábor) a ukládá se do `tel_service_orders.center_code`.
-- Přesný název a formát sloupce se doplní podle ukázky nového exportu.
+- Sloupec se jmenuje `stredisko` a je poslední: `datum_zac;spz;fabkod;vinkod;klient;stredisko`. Obsahuje jen kód.
 - Importér na přechodnou dobu přijímá starý i nový formát (sloupec střediska je volitelný). Pořadí nasazení aplikace a změny SSIS exportu tak nehraje roli.
 - Náhled nadcházejících objednávek zobrazuje i středisko.
+
+**Pojistky proti vadnému exportu (v1.8):** importér celý soubor odmítne a v tabulce ponechá poslední platná data, pokud
+- soubor obsahuje hlavičku víckrát (export se připsal na konec souboru místo přepsání),
+- poslední řádek má méně sloupců než hlavička (soubor se nahrál během zápisu).
+
+Chyba se zapíše do protokolu synchronizace. SSIS job musí CSV soubory před exportem vyprázdnit, viz `ssis-export-vozidel.md`.
 
 ### 4.10 Pobočky (`/admin/branches.php`, v1.8)
 

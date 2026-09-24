@@ -318,6 +318,72 @@ a:hover { color: var(--color-accent-dk); }
     color: #198754;
     font-weight: 600;
 }
+/* Termín na jiném středisku, než kam patří pobočka požadavku — nápověda k přeřazení */
+.order-other-center {
+    color: #b45309;
+}
+
+/* ── Pobočky ─────────────────────────────────────────────────── */
+.badge-branch {
+    display: inline-block;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    padding: 0.2em 0.5em;
+    border-radius: 3px;
+    background: #e7f7fd;
+    color: #00597a;
+    border: 1px solid #9ad9f2;
+    white-space: nowrap;
+    vertical-align: middle;
+    line-height: 1.4;
+}
+.badge-moved {
+    font-size: 0.72rem;
+    color: #6c757d;
+    white-space: nowrap;
+}
+/* Požadavek, který uživatel založil pro jinou pobočku (jen sledování a přeřazení) */
+.req-card-foreign {
+    opacity: .72;
+    border-style: dashed;
+}
+.req-card-foreign:hover {
+    opacity: 1;
+}
+/* Volba pobočky v novém požadavku: tlačítka se zkratkou */
+.branch-picker-group .btn {
+    min-width: 3.5rem;
+    font-weight: 700;
+    letter-spacing: .05em;
+}
+/* Název zvolené pobočky v řádku popisku */
+.branch-picked-name {
+    display: inline-block;
+    font-weight: 700;
+    padding: 0.1em 0.6em;
+    border-radius: 3px;
+    background: var(--color-accent);
+    color: #fff;
+}
+.branch-picked-name:empty { display: none; }
+.branch-picked-name.is-other {
+    background: var(--color-amber);
+}
+/* Zvolena jiná než domovská pobočka — stisknuté tlačítko oranžově */
+.branch-picked-other .btn-check:checked + .btn {
+    background-color: var(--color-amber);
+    border-color: var(--color-amber);
+    color: #fff;
+}
+.page-toast {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 1090;
+    max-width: 360px;
+    box-shadow: var(--shadow-lg);
+}
 
 /* Ikony úrovní */
 .level-icon { font-size: 0.72rem; }
@@ -393,6 +459,14 @@ a:hover { color: var(--color-accent-dk); }
 
 [data-bs-theme="dark"] .card-order {
     color: #4ade80;
+}
+[data-bs-theme="dark"] .order-other-center {
+    color: #fbbf24;
+}
+[data-bs-theme="dark"] .badge-branch {
+    background: #0b3444;
+    color: #7fd6f5;
+    border-color: #13607c;
 }
 
 [data-bs-theme="dark"] .req-card {

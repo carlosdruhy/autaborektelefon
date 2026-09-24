@@ -38,18 +38,69 @@ switch ($action) {
 
 function handleList(): never
 {
-    $stmt = getDB()->query(
-        'SELECT id, name, email, role, is_active, can_reopen, created_at, last_login
+    $db   = getDB();
+    $stmt = $db->query(
+        'SELECT id, name, email, role, is_active, can_reopen, default_branch_id, created_at, last_login
          FROM tel_users
          ORDER BY name ASC'
     ) ?: throw new \RuntimeException('Query failed');
     $rows = $stmt->fetchAll();
+
+    $ub = $db->query('SELECT user_id, branch_id FROM tel_user_branches ORDER BY branch_id')
+        ?: throw new \RuntimeException('Query failed');
+    $branchesByUser = [];
+    foreach (pdoFetchAll($ub) as $link) {
+        $branchesByUser[arrInt($link, 'user_id')][] = arrInt($link, 'branch_id');
+    }
+
     foreach ($rows as &$r) {
         if ($r['created_at']) $r['created_at_local'] = toLocalTime($r['created_at']);
         if ($r['last_login'])  $r['last_login_local']  = toLocalTime($r['last_login']);
+        $r['branch_ids'] = $branchesByUser[arrInt($r, 'id')] ?? [];
     }
     unset($r);
     jsonOk($rows);
+}
+
+/**
+ * Uloží pobočky uživatele (M:N) a domovskou pobočku. Domovská musí být mezi přiřazenými;
+ * když chybí, použije se první přiřazená. Bez poboček je domovská NULL.
+ * @param array<string, mixed> $body
+ */
+function saveUserBranches(PDO $db, int $userId, array $body): void
+{
+    $raw = $body['branch_ids'] ?? [];
+    $ids = [];
+    if (is_array($raw)) {
+        foreach ($raw as $v) {
+            if (is_numeric($v) && (int) $v > 0) {
+                $ids[] = (int) $v;
+            }
+        }
+    }
+    $ids = array_values(array_unique($ids));
+
+    if ($ids !== []) {
+        $in    = implode(',', array_fill(0, count($ids), '?'));
+        $check = $db->prepare("SELECT COUNT(*) FROM tel_branches WHERE id IN ($in)");
+        $check->execute($ids);
+        if ((int) $check->fetchColumn() !== count($ids)) {
+            jsonErr('Neplatná pobočka');
+        }
+    }
+
+    $default = arrInt($body, 'default_branch_id');
+    if (!in_array($default, $ids, true)) {
+        $default = $ids[0] ?? 0;
+    }
+
+    $db->prepare('DELETE FROM tel_user_branches WHERE user_id = ?')->execute([$userId]);
+    $ins = $db->prepare('INSERT INTO tel_user_branches (user_id, branch_id) VALUES (?, ?)');
+    foreach ($ids as $branchId) {
+        $ins->execute([$userId, $branchId]);
+    }
+    $db->prepare('UPDATE tel_users SET default_branch_id = ? WHERE id = ?')
+       ->execute([$default > 0 ? $default : null, $userId]);
 }
 
 function handleCreate(): never
@@ -74,12 +125,21 @@ function handleCreate(): never
 
     $canReopen = isset($body['can_reopen']) ? (int)(bool)$body['can_reopen'] : 1;
     $now = nowUtc();
-    $stmt = $db->prepare(
-        'INSERT INTO tel_users (name, email, role, is_active, can_reopen, created_at)
-         VALUES (?, ?, ?, 1, ?, ?)'
-    );
-    $stmt->execute([$name, $email, $role, $canReopen, $now]);
-    $userId = (int)$db->lastInsertId();
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare(
+            'INSERT INTO tel_users (name, email, role, is_active, can_reopen, created_at)
+             VALUES (?, ?, ?, 1, ?, ?)'
+        );
+        $stmt->execute([$name, $email, $role, $canReopen, $now]);
+        $userId = (int)$db->lastInsertId();
+        saveUserBranches($db, $userId, $body);
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        appLog('user create error: ' . $e->getMessage());
+        jsonErr('Chyba při ukládání', 500);
+    }
 
     // Vygeneruj reset token a odešli e-mail
     $token     = generateToken(32);
@@ -135,8 +195,19 @@ function handleUpdate(): never
     $check->execute([$email, $id]);
     if (pdoFetch($check)) jsonErr('Uživatel s tímto e-mailem již existuje');
 
-    $db->prepare('UPDATE tel_users SET name = ?, email = ? WHERE id = ?')
-       ->execute([$name, $email, $id]);
+    $db->beginTransaction();
+    try {
+        $db->prepare('UPDATE tel_users SET name = ?, email = ? WHERE id = ?')
+           ->execute([$name, $email, $id]);
+        if (array_key_exists('branch_ids', $body)) {
+            saveUserBranches($db, $id, $body);
+        }
+        $db->commit();
+    } catch (Throwable $e) {
+        $db->rollBack();
+        appLog('user update error: ' . $e->getMessage());
+        jsonErr('Chyba při ukládání', 500);
+    }
 
     jsonOk(['id' => $id]);
 }

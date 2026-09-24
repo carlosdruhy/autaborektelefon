@@ -10,8 +10,10 @@ requireAdmin();
 checkSessionTimeout();
 touchSession();
 
-$from = arrStr($_GET, 'from', date('Y-m-01'));
-$to   = arrStr($_GET, 'to', date('Y-m-d'));
+$from     = arrStr($_GET, 'from', date('Y-m-01'));
+$to       = arrStr($_GET, 'to', date('Y-m-d'));
+$branch   = arrInt($_GET, 'branch');
+$branches = getBranches(getDB());
 ?><!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -38,6 +40,7 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
     </a>
     <div class="ms-auto d-flex gap-2">
         <a href="../dashboard.php" class="btn btn-sm btn-outline-light">Přehled</a>
+        <a href="branches.php" class="btn btn-sm btn-outline-light">Pobočky</a>
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
@@ -62,8 +65,41 @@ $to   = arrStr($_GET, 'to', date('Y-m-d'));
             <input type="date" class="form-control form-control-sm" name="to"
                    value="<?= h($to) ?>">
         </div>
+        <div>
+            <label class="form-label small mb-1">Pobočka</label>
+            <select class="form-select form-select-sm" name="branch">
+                <option value="0">Všechny</option>
+                <?php foreach ($branches as $b): ?>
+                <option value="<?= $b['id'] ?>" <?= $b['id'] === $branch ? 'selected' : '' ?>><?= h($b['code'] . ' – ' . $b['name']) ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
         <button type="submit" class="btn btn-primary btn-sm">Zobrazit</button>
     </form>
+
+    <!-- Podle poboček (filtr pobočky se na tuto tabulku nevztahuje) -->
+    <div class="card shadow-sm mb-4">
+        <div class="card-header fw-semibold">Podle poboček</div>
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 admin-table">
+                <thead>
+                    <tr>
+                        <th>Pobočka</th>
+                        <th class="text-end">Přijato</th>
+                        <th class="text-end">Vyřízeno</th>
+                        <th class="text-end">Prům. čas (min)</th>
+                        <th class="text-end">Přeřazeno sem</th>
+                        <th class="text-end">Přeřazeno jinam</th>
+                    </tr>
+                </thead>
+                <tbody id="branchTable">
+                    <tr><td colspan="6" class="text-center py-2">
+                        <div class="spinner-border spinner-border-sm"></div>
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
 
     <div class="row g-4">
         <!-- Podle techniků -->
@@ -121,6 +157,7 @@ const CSRF     = '<?= h(arrStr($_SESSION, 'csrf_token')) ?>';
 const STATS_API = '<?= APP_URL ?>/api/stats.php';
 const FROM_DATE = '<?= h($from) ?>';
 const TO_DATE   = '<?= h($to) ?>';
+const BRANCH_ID = <?= $branch ?>;
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="<?= assetUrl('assets/js/admin.js') ?>"></script>

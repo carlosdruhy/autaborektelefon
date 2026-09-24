@@ -21,26 +21,56 @@ require_once dirname(__DIR__, 2) . '/includes/functions.php';
 require_once dirname(__DIR__, 2) . '/includes/auth.php';
 require_once __DIR__ . '/DatabaseTestCase.php';
 
-// Create all tables once at bootstrap time (IF NOT EXISTS — idempotent)
+// Recreate all tables at bootstrap time so schema changes always reach the test DB
 createTestSchema(getDB());
 
 function createTestSchema(PDO $db): void
 {
     $db->exec('SET FOREIGN_KEY_CHECKS = 0');
 
+    foreach ([
+        'tel_sms_queue', 'tel_password_resets', 'tel_request_history', 'tel_requests',
+        'tel_user_branches', 'tel_rate_limits', 'tel_vehicles', 'tel_service_orders',
+        'tel_users', 'tel_branches', 'tel_settings',
+    ] as $table) {
+        $db->exec("DROP TABLE IF EXISTS `{$table}`");
+    }
+
     $statements = [
-        "CREATE TABLE IF NOT EXISTS `tel_users` (
-          `id`            INT UNSIGNED NOT NULL AUTO_INCREMENT,
-          `name`          VARCHAR(100) NOT NULL,
-          `email`         VARCHAR(255) NOT NULL,
-          `password_hash` VARCHAR(255) DEFAULT NULL,
-          `role`          VARCHAR(20)  NOT NULL DEFAULT 'user',
-          `is_active`     TINYINT(1)   NOT NULL DEFAULT 1,
-          `can_reopen`    TINYINT(1)   NOT NULL DEFAULT 1,
-          `created_at`    DATETIME     NOT NULL,
-          `last_login`    DATETIME     DEFAULT NULL,
+        "CREATE TABLE IF NOT EXISTS `tel_branches` (
+          `id`              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `code`            VARCHAR(20)  NOT NULL,
+          `name`            VARCHAR(100) NOT NULL,
+          `dms_center_code` VARCHAR(20)  DEFAULT NULL,
+          `is_active`       TINYINT(1)   NOT NULL DEFAULT 1,
+          `sort_order`      SMALLINT     NOT NULL DEFAULT 0,
+          `created_at`      DATETIME     NOT NULL,
           PRIMARY KEY (`id`),
-          UNIQUE KEY `uq_email` (`email`)
+          UNIQUE KEY `uq_branch_code` (`code`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "CREATE TABLE IF NOT EXISTS `tel_users` (
+          `id`                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `name`              VARCHAR(100) NOT NULL,
+          `email`             VARCHAR(255) NOT NULL,
+          `password_hash`     VARCHAR(255) DEFAULT NULL,
+          `role`              VARCHAR(20)  NOT NULL DEFAULT 'user',
+          `is_active`         TINYINT(1)   NOT NULL DEFAULT 1,
+          `can_reopen`        TINYINT(1)   NOT NULL DEFAULT 1,
+          `default_branch_id` INT UNSIGNED DEFAULT NULL,
+          `created_at`        DATETIME     NOT NULL,
+          `last_login`        DATETIME     DEFAULT NULL,
+          PRIMARY KEY (`id`),
+          UNIQUE KEY `uq_email` (`email`),
+          CONSTRAINT `fk_user_default_branch` FOREIGN KEY (`default_branch_id`) REFERENCES `tel_branches`(`id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "CREATE TABLE IF NOT EXISTS `tel_user_branches` (
+          `user_id`   INT UNSIGNED NOT NULL,
+          `branch_id` INT UNSIGNED NOT NULL,
+          PRIMARY KEY (`user_id`, `branch_id`),
+          CONSTRAINT `fk_ub_user`   FOREIGN KEY (`user_id`)   REFERENCES `tel_users`(`id`),
+          CONSTRAINT `fk_ub_branch` FOREIGN KEY (`branch_id`) REFERENCES `tel_branches`(`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "CREATE TABLE IF NOT EXISTS `tel_requests` (
@@ -51,6 +81,7 @@ function createTestSchema(PDO $db): void
           `client_email`    VARCHAR(255)  DEFAULT NULL,
           `request_text`    TEXT          NOT NULL,
           `status`          VARCHAR(20)   NOT NULL DEFAULT 'new',
+          `branch_id`       INT UNSIGNED  NOT NULL,
           `pending_reason`  TEXT          DEFAULT NULL,
           `reopen_reason`   TEXT          DEFAULT NULL,
           `created_by`      INT UNSIGNED  NOT NULL,
@@ -63,7 +94,8 @@ function createTestSchema(PDO $db): void
           `deleted_at`      DATETIME      DEFAULT NULL,
           PRIMARY KEY (`id`),
           CONSTRAINT `fk_req_created_by`  FOREIGN KEY (`created_by`)    REFERENCES `tel_users`(`id`),
-          CONSTRAINT `fk_req_assigned_to` FOREIGN KEY (`assigned_to_id`) REFERENCES `tel_users`(`id`)
+          CONSTRAINT `fk_req_assigned_to` FOREIGN KEY (`assigned_to_id`) REFERENCES `tel_users`(`id`),
+          CONSTRAINT `fk_req_branch`      FOREIGN KEY (`branch_id`)      REFERENCES `tel_branches`(`id`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "CREATE TABLE IF NOT EXISTS `tel_request_history` (
@@ -143,6 +175,7 @@ function createTestSchema(PDO $db): void
           `spz_original`   VARCHAR(20)  DEFAULT NULL,
           `vin`            VARCHAR(17)  DEFAULT NULL,
           `client_name`    VARCHAR(100) DEFAULT NULL,
+          `center_code`    VARCHAR(20)  DEFAULT NULL,
           `imported_at`    DATETIME     NOT NULL,
           PRIMARY KEY (`id`),
           INDEX `idx_so_spz`       (`spz_normalized`),

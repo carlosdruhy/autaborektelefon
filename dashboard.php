@@ -9,6 +9,21 @@ startSecureSession();
 requireLogin();
 checkSessionTimeout();
 touchSession();
+
+// Pobočky (PRD 3.14): všechny aktivní pro výběr v novém požadavku, vlastní pro filtr
+$db             = getDB();
+$activeBranches = getBranches($db, true);
+$myBranchIds    = userBranchIds($db, currentUserId());
+$activeIds      = array_column($activeBranches, 'id');
+$filterBranches = isAdmin()
+    ? $activeBranches
+    : array_values(array_filter($activeBranches, static fn (array $b): bool => in_array($b['id'], $myBranchIds, true)));
+$defaultBranchId = userDefaultBranchId($db, currentUserId());
+if (!in_array($defaultBranchId, $activeIds, true)) {
+    $myActive        = array_values(array_intersect($myBranchIds, $activeIds));
+    $defaultBranchId = $myActive[0] ?? ($activeIds[0] ?? 0);
+}
+$canCreate = isAdmin() || $myBranchIds !== [];
 ?><!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -68,7 +83,8 @@ touchSession();
     <div class="req-toolbar mb-3 d-flex flex-wrap align-items-center gap-2">
 
         <!-- Nový požadavek -->
-        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newRequestModal">
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#newRequestModal"
+                <?= $canCreate ? '' : 'disabled' ?>>
             <i class="bi bi-plus-lg"></i> Nový požadavek
         </button>
 
@@ -106,6 +122,17 @@ touchSession();
             <?php endif; ?>
         </div>
 
+        <!-- Pobočky (jen když uživatel vidí víc než jednu) -->
+        <?php if (count($filterBranches) > 1): ?>
+        <div class="btn-group btn-group-sm" role="group" aria-label="Filtr pobočky">
+            <button class="btn btn-outline-secondary branch-btn active" data-branch="">Všechny</button>
+            <?php foreach ($filterBranches as $b): ?>
+            <button class="btn btn-outline-secondary branch-btn" data-branch="<?= $b['id'] ?>"
+                    title="<?= h($b['name']) ?>"><?= h($b['code']) ?></button>
+            <?php endforeach; ?>
+        </div>
+        <?php endif; ?>
+
         <!-- Vyhledávání -->
         <div class="flex-grow-1" style="min-width:180px;max-width:300px">
             <div class="input-group input-group-sm">
@@ -142,6 +169,13 @@ touchSession();
         </button>
     </div>
 
+    <?php if (!$canCreate): ?>
+    <div class="alert alert-warning">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        Nemáte přiřazenou pobočku, kontaktujte administrátora.
+    </div>
+    <?php endif; ?>
+
     <!-- Počet výsledků -->
     <div class="mb-2">
         <small class="text-muted" id="resultCount"></small>
@@ -168,6 +202,24 @@ touchSession();
             <div class="modal-body">
                 <div id="newRequestAlert" class="d-none mb-3"></div>
                 <form id="newRequestForm" novalidate>
+                    <div class="mb-3">
+                        <label class="form-label d-block">Pobočka, která bude požadavek řešit <span class="text-danger">*</span>
+                            <span id="branchPickedName" class="branch-picked-name ms-2"></span></label>
+                        <div class="d-flex align-items-center flex-wrap gap-2">
+                            <div class="btn-group branch-picker-group" role="group" aria-label="Pobočka">
+                                <?php foreach ($activeBranches as $b): ?>
+                                <input type="radio" class="btn-check" name="branch_id" id="newReqBranch<?= $b['id'] ?>"
+                                       value="<?= $b['id'] ?>" data-name="<?= h($b['name']) ?>" autocomplete="off"
+                                       <?= $b['id'] === $defaultBranchId ? 'checked' : '' ?>>
+                                <label class="btn btn-outline-primary" for="newReqBranch<?= $b['id'] ?>"
+                                       title="<?= h($b['name']) ?>"><?= h($b['code']) ?></label>
+                                <?php endforeach; ?>
+                            </div>
+                        </div>
+                        <div id="branchOtherHint" class="form-text text-warning-emphasis d-none">
+                            <i class="bi bi-exclamation-triangle-fill"></i> Požadavek půjde jiné pobočce než vaší domovské.
+                        </div>
+                    </div>
                     <div class="row g-2 mb-2">
                         <div class="col-sm-4">
                             <label class="form-label">SPZ <span class="text-danger">*</span></label>
@@ -248,8 +300,18 @@ const APP = {
         name:      '<?= h(currentUserName()) ?>',
         role:      '<?= h(currentUserRole()) ?>',
         isAdmin:   <?= isAdmin() ? 'true' : 'false' ?>,
-        canReopen: <?= (isAdmin() || currentUserCanReopen()) ? 'true' : 'false' ?>
+        canReopen: <?= (isAdmin() || currentUserCanReopen()) ? 'true' : 'false' ?>,
+        branchIds: <?= json_encode($myBranchIds) ?>,
+        defaultBranchId: <?= $defaultBranchId ?>,
+        canCreate: <?= $canCreate ? 'true' : 'false' ?>
     },
+    // Aktivní pobočky (výběr v novém požadavku a při přeřazení)
+    branches: <?= json_encode(
+        array_map(static fn (array $b): array => ['id' => $b['id'], 'code' => $b['code'], 'name' => $b['name']], $activeBranches),
+        JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP
+    ) ?>,
+    // Badge pobočky na kartě jen pro uživatele, kteří vidí víc poboček
+    showBranch: <?= count($filterBranches) > 1 ? 'true' : 'false' ?>,
     smsEnabled: <?= getSetting('sms_enabled', '0') ? 'true' : 'false' ?>
 };
 </script>
@@ -334,6 +396,9 @@ const APP = {
         </div>
     </div>
 </div>
+
+<!-- Krátké hlášení (např. po přeřazení na jinou pobočku) -->
+<div id="pageToast" class="alert alert-info page-toast d-none" role="status"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="<?= assetUrl('assets/js/app.js') ?>"></script>

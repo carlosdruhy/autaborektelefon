@@ -80,7 +80,7 @@ if (is_array($syncLogDecoded)) {
 
 // Náhled nadcházejících objednávek (od dnešního dne v Praze), s modelem z evidence vozidel
 $listStmt = $db->prepare('
-    SELECT o.scheduled_at, o.spz_original, o.vin, o.client_name, o.source, v.model
+    SELECT o.scheduled_at, o.spz_original, o.vin, o.client_name, o.source, o.center_code, v.model
     FROM tel_service_orders o
     LEFT JOIN tel_vehicles v ON v.spz_normalized = o.spz_normalized
     WHERE o.scheduled_at >= ?
@@ -89,6 +89,7 @@ $listStmt = $db->prepare('
 ');
 $listStmt->execute([pragueTodayStartUtc()]);
 $orders = pdoFetchAll($listStmt);
+$centerLabels = getCenterLabels($db);
 
 ?><!DOCTYPE html>
 <html lang="cs">
@@ -112,6 +113,7 @@ $orders = pdoFetchAll($listStmt);
     </a>
     <div class="ms-auto d-flex gap-2">
         <a href="../dashboard.php" class="btn btn-sm btn-outline-light">Přehled</a>
+        <a href="branches.php" class="btn btn-sm btn-outline-light">Pobočky</a>
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>
@@ -283,6 +285,7 @@ $orders = pdoFetchAll($listStmt);
                         <th>Vozidlo</th>
                         <th>VIN</th>
                         <th>Klient</th>
+                        <th>Středisko</th>
                         <th>Zdroj</th>
                     </tr>
                 </thead>
@@ -294,7 +297,7 @@ $orders = pdoFetchAll($listStmt);
                         $day   = substr($local, 0, 10);
                     ?>
                     <?php if ($day !== $prevDay): ?>
-                        <tr class="table-light"><td colspan="6" class="fw-semibold small"><?= h($day) ?></td></tr>
+                        <tr class="table-light"><td colspan="7" class="fw-semibold small"><?= h($day) ?></td></tr>
                         <?php $prevDay = $day; ?>
                     <?php endif; ?>
                     <tr>
@@ -303,6 +306,8 @@ $orders = pdoFetchAll($listStmt);
                         <td class="small"><?= h(arrStrNull($o, 'model') ?? '') ?></td>
                         <td class="font-monospace small"><?= h(arrStrNull($o, 'vin') ?? '—') ?></td>
                         <td><?= h(arrStrNull($o, 'client_name') ?? '') ?></td>
+                        <?php $center = arrStr($o, 'center_code'); ?>
+                        <td class="small"><?= $center !== '' ? h(($centerLabels[$center] ?? '') . ' (' . $center . ')') : '<span class="text-muted">—</span>' ?></td>
                         <td class="small text-muted"><?= h(SERVICE_ORDER_FILES[arrStr($o, 'source')]['label'] ?? arrStr($o, 'source')) ?></td>
                     </tr>
                 <?php endforeach; ?>

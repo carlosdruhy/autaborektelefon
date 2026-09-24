@@ -15,14 +15,20 @@ abstract class DatabaseTestCase extends TestCase
         'tel_rate_limits',
         'tel_vehicles',
         'tel_service_orders',
+        'tel_user_branches',
         'tel_users',
+        'tel_branches',
         'tel_settings',
     ];
+
+    /** Výchozí pobočka (ID 1), která existuje v každém testu — požadavky ji potřebují kvůli FK. */
+    protected int $defaultBranchId = 1;
 
     protected function setUp(): void
     {
         $this->db = getDB();
         $this->truncateAll();
+        $this->defaultBranchId = $this->createBranch('BOR', 'Borek – servis', '3');
     }
 
     protected function tearDown(): void
@@ -66,20 +72,39 @@ abstract class DatabaseTestCase extends TestCase
         ?string $resolvedAt = null,
         ?string $clientPhone = '777111222',
         ?string $clientEmail = 'klient@example.com',
-        ?string $deletedAt = null
+        ?string $deletedAt = null,
+        ?int $branchId = null,
+        ?string $createdAt = null
     ): int {
         $now = gmdate('Y-m-d H:i:s');
         $stmt = $this->db->prepare(
             "INSERT INTO tel_requests
                (spz, client_name, client_phone, client_email, request_text,
-                status, created_by, created_at, updated_at, resolved_at, deleted_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                status, branch_id, created_by, created_at, updated_at, resolved_at, deleted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         );
         $stmt->execute([
             'ABC123', 'Jan Novák', $clientPhone, $clientEmail,
-            'Test požadavek', $status, $createdBy, $now, $now, $resolvedAt, $deletedAt,
+            'Test požadavek', $status, $branchId ?? $this->defaultBranchId, $createdBy,
+            $createdAt ?? $now, $now, $resolvedAt, $deletedAt,
         ]);
         return (int) $this->db->lastInsertId();
+    }
+
+    protected function createBranch(string $code, string $name, ?string $centerCode = null, bool $active = true): int
+    {
+        $stmt = $this->db->prepare(
+            'INSERT INTO tel_branches (code, name, dms_center_code, is_active, sort_order, created_at)
+             VALUES (?, ?, ?, ?, 0, ?)'
+        );
+        $stmt->execute([$code, $name, $centerCode, $active ? 1 : 0, gmdate('Y-m-d H:i:s')]);
+        return (int) $this->db->lastInsertId();
+    }
+
+    protected function assignUserToBranch(int $userId, int $branchId): void
+    {
+        $this->db->prepare('INSERT INTO tel_user_branches (user_id, branch_id) VALUES (?, ?)')
+            ->execute([$userId, $branchId]);
     }
 
     protected function createSms(

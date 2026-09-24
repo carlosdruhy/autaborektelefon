@@ -80,17 +80,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 function installSchema(PDO $db): void
 {
     $sql = <<<'SQL'
-CREATE TABLE IF NOT EXISTS `tel_users` (
-  `id`            INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `name`          VARCHAR(100) NOT NULL,
-  `email`         VARCHAR(255) NOT NULL,
-  `password_hash` VARCHAR(255) DEFAULT NULL,
-  `role`          VARCHAR(20)  NOT NULL DEFAULT 'user',
-  `is_active`     TINYINT(1)   NOT NULL DEFAULT 1,
-  `created_at`    DATETIME     NOT NULL,
-  `last_login`    DATETIME     DEFAULT NULL,
+CREATE TABLE IF NOT EXISTS `tel_branches` (
+  `id`              INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `code`            VARCHAR(20)  NOT NULL,
+  `name`            VARCHAR(100) NOT NULL,
+  `dms_center_code` VARCHAR(20)  DEFAULT NULL,
+  `is_active`       TINYINT(1)   NOT NULL DEFAULT 1,
+  `sort_order`      SMALLINT     NOT NULL DEFAULT 0,
+  `created_at`      DATETIME     NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_email` (`email`)
+  UNIQUE KEY `uq_branch_code` (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tel_users` (
+  `id`                INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `name`              VARCHAR(100) NOT NULL,
+  `email`             VARCHAR(255) NOT NULL,
+  `password_hash`     VARCHAR(255) DEFAULT NULL,
+  `role`              VARCHAR(20)  NOT NULL DEFAULT 'user',
+  `is_active`         TINYINT(1)   NOT NULL DEFAULT 1,
+  `can_reopen`        TINYINT(1)   NOT NULL DEFAULT 1,
+  `default_branch_id` INT UNSIGNED DEFAULT NULL,
+  `created_at`        DATETIME     NOT NULL,
+  `last_login`        DATETIME     DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_email` (`email`),
+  CONSTRAINT `fk_user_default_branch` FOREIGN KEY (`default_branch_id`) REFERENCES `tel_branches`(`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `tel_user_branches` (
+  `user_id`   INT UNSIGNED NOT NULL,
+  `branch_id` INT UNSIGNED NOT NULL,
+  PRIMARY KEY (`user_id`, `branch_id`),
+  INDEX `idx_ub_branch` (`branch_id`),
+  CONSTRAINT `fk_ub_user`   FOREIGN KEY (`user_id`)   REFERENCES `tel_users`(`id`),
+  CONSTRAINT `fk_ub_branch` FOREIGN KEY (`branch_id`) REFERENCES `tel_branches`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tel_requests` (
@@ -101,6 +125,7 @@ CREATE TABLE IF NOT EXISTS `tel_requests` (
   `client_email`      VARCHAR(255)  DEFAULT NULL,
   `request_text`      TEXT          NOT NULL,
   `status`            VARCHAR(20)   NOT NULL DEFAULT 'new',
+  `branch_id`         INT UNSIGNED  NOT NULL,
   `pending_reason`    TEXT          DEFAULT NULL,
   `reopen_reason`     TEXT          DEFAULT NULL,
   `created_by`        INT UNSIGNED  NOT NULL,
@@ -117,8 +142,10 @@ CREATE TABLE IF NOT EXISTS `tel_requests` (
   INDEX `idx_req_assigned` (`assigned_to_id`),
   INDEX `idx_req_updated`  (`updated_at`),
   INDEX `idx_req_deleted`  (`deleted_at`),
+  INDEX `idx_req_branch`   (`branch_id`, `status`),
   CONSTRAINT `fk_req_created_by`  FOREIGN KEY (`created_by`)     REFERENCES `tel_users`(`id`),
-  CONSTRAINT `fk_req_assigned_to` FOREIGN KEY (`assigned_to_id`) REFERENCES `tel_users`(`id`)
+  CONSTRAINT `fk_req_assigned_to` FOREIGN KEY (`assigned_to_id`) REFERENCES `tel_users`(`id`),
+  CONSTRAINT `fk_req_branch`      FOREIGN KEY (`branch_id`)      REFERENCES `tel_branches`(`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tel_request_history` (
@@ -188,12 +215,14 @@ CREATE TABLE IF NOT EXISTS `tel_service_orders` (
   `spz_original`   VARCHAR(20)  DEFAULT NULL,
   `vin`            VARCHAR(17)  DEFAULT NULL,
   `client_name`    VARCHAR(100) DEFAULT NULL,
+  `center_code`    VARCHAR(20)  DEFAULT NULL,
   `imported_at`    DATETIME     NOT NULL,
   PRIMARY KEY (`id`),
   INDEX `idx_so_spz`       (`spz_normalized`),
   INDEX `idx_so_vin`       (`vin`),
   INDEX `idx_so_scheduled` (`scheduled_at`),
-  INDEX `idx_so_source`    (`source`)
+  INDEX `idx_so_source`    (`source`),
+  INDEX `idx_so_center`    (`center_code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 SQL;
 
@@ -215,6 +244,12 @@ function insertDefaultSettings(PDO $db): void
         ('color_level_4',    '120'),
         ('session_timeout',  '500'),
         ('page_size',        '50')");
+
+    // Výchozí pobočka — další se zakládají v administraci (Pobočky)
+    $db->prepare(
+        "INSERT IGNORE INTO `tel_branches` (`id`, `code`, `name`, `dms_center_code`, `is_active`, `sort_order`, `created_at`)
+         VALUES (1, 'BOREK', 'Borek – servis', '3', 1, 10, ?)"
+    )->execute([gmdate('Y-m-d H:i:s')]);
 }
 
 function createAdminUser(PDO $db, string $name, string $email, string $password): void
@@ -222,10 +257,12 @@ function createAdminUser(PDO $db, string $name, string $email, string $password)
     $hash = password_hash($password, PASSWORD_BCRYPT, ['cost' => 12]);
     $now  = gmdate('Y-m-d H:i:s');
     $stmt = $db->prepare(
-        'INSERT INTO tel_users (name, email, password_hash, role, is_active, created_at)
-         VALUES (?, ?, ?, \'admin\', 1, ?)'
+        'INSERT INTO tel_users (name, email, password_hash, role, is_active, default_branch_id, created_at)
+         VALUES (?, ?, ?, \'admin\', 1, 1, ?)'
     );
     $stmt->execute([$name, $email, $hash, $now]);
+    $db->prepare('INSERT INTO tel_user_branches (user_id, branch_id) VALUES (?, 1)')
+       ->execute([(int) $db->lastInsertId()]);
 }
 
 // ─── HTML ─────────────────────────────────────────────────────────────────────

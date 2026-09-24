@@ -197,6 +197,7 @@ $s3Configured = ($s3KeyId !== '' && $s3Secret !== '' && $s3Region !== '' && $s3B
     </a>
     <div class="ms-auto d-flex gap-2">
         <a href="../dashboard.php" class="btn btn-sm btn-outline-light">Přehled</a>
+        <a href="branches.php" class="btn btn-sm btn-outline-light">Pobočky</a>
         <a href="stats.php" class="btn btn-sm btn-outline-light">Statistiky</a>
         <a href="sms.php" class="btn btn-sm btn-outline-light">SMS</a>
         <a href="settings.php" class="btn btn-sm btn-outline-light">Nastavení</a>

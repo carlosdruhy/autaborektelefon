@@ -35,6 +35,12 @@ Test layout:
 - `tests/Integration/AnonymizationTest.php` — GDPR anonymization (highest risk: irreversible)
 - `tests/Integration/RateLimitTest.php` — brute-force rate limiting (security critical)
 - `tests/Integration/SmsQueueTest.php` — SMS queue schema and anonymization interaction
+- `tests/Integration/BranchAccessTest.php` — branch visibility, access levels, branch change (security critical)
+- `tests/Integration/ServiceOrdersImportTest.php` — planner CSV import incl. `stredisko` column and rejection of appended/truncated files
+
+The test bootstrap drops and recreates all tables on every run, so schema changes reach `telefon_test` automatically. `DatabaseTestCase::setUp()` creates branch ID 1 (`$this->defaultBranchId`) because `tel_requests.branch_id` is NOT NULL.
+
+Local MySQL (Laragon) does not start automatically: `C:\laragon\bin\mysql\mysql-8.4.3-winx64\bin\mysqld.exe --defaults-file=...\my.ini --datadir=C:\laragon\data\mysql-8.4`. PHPStan needs `php -d memory_limit=1G vendor/bin/phpstan analyse --configuration=phpstan.neon`. `includes/config.php` points to the production DB — never run the app locally against it; use a scratch copy with its own config.
 
 ## Architecture
 
@@ -48,8 +54,10 @@ Test layout:
 │   ├── sync-vehicles.php # Cron (?key=): S3 export-spz.csv → tel_vehicles (upsert) + planovac-objednano.csv & planovac-prijem.csv → tel_service_orders (snapshot per source)
 │   └── stats.php      # Stats by technician and by age
 ├── admin/             # Admin-only HTML pages
-│   ├── api/users.php  # User management API
+│   ├── api/users.php  # User management API (incl. branch assignment)
+│   ├── api/branches.php # Branch CRUD API (save, toggle_active — no delete)
 │   ├── users.php      # User management UI
+│   ├── branches.php   # Branches UI
 │   ├── stats.php      # Statistics UI
 │   ├── sms.php        # All-SMS overview (admin)
 │   ├── import-vehicles.php # Vehicle sync UI + locked S3 settings (shared by vehicles & orders)
@@ -106,16 +114,24 @@ Each transition is a POST to `api/requests.php?action=<action>` with `expected_u
 - `apiGet(path)` and `apiPost(path, body)` — path is relative to `APP.apiBase` (`/api`)
 - Cards are re-rendered on every poll via `loadRequests()` + `createRequestCard()`
 - Modal detail is loaded fresh on each open via `openRequestModal(id)` → `apiGet('/requests.php?action=get&id=...')`
-- User preferences persist in `localStorage` via `KEYS` constants: `AB_TEL_REFRESH`, `AB_TEL_SORT`, `AB_TEL_FILTER`, `AB_TEL_SOUND`, `AB_TEL_THEME`
+- User preferences persist in `localStorage` via `KEYS` constants: `AB_TEL_REFRESH`, `AB_TEL_SORT`, `AB_TEL_FILTER`, `AB_TEL_SOUND`, `AB_TEL_THEME`, `AB_TEL_BRANCH` (branch filter)
 - Draft technician notes persist in `sessionStorage` keyed by request ID
 - Dark mode: Bootstrap 5.3 `data-bs-theme="dark"` on `<html>`, toggled by `initDarkMode()`, stored in `AB_TEL_THEME`. An inline `<script>` in `<head>` applies the theme before CSS loads (prevents flash)
 - Keyboard shortcuts: `N` = nový požadavek, `/` = hledání, `?` = nápověda — implemented in `initKeyboardShortcuts()`; ignored when focus is in INPUT/TEXTAREA/SELECT
 
 ### S3 CSV synchronizace (vozidla + objednávky)
 - Shared S3 credentials (`s3_region`, `s3_bucket`, `s3_access_key_id`, `s3_secret_access_key`) and one cron key (`vehicles_sync_key`) in `tel_settings`; edited only on `admin/import-vehicles.php` behind the e-mail OTP lock
-- Vehicles: `s3_object_key` → `importVehiclesCsv()` (upsert by SPZ). Orders: the `SERVICE_ORDER_FILES` constant maps each source (`objednano`, `prijem`) to its settings keys (`s3_orders_object_key` / `s3_prijem_object_key`, ETag, last-modified); `importServiceOrdersCsv($db, $path, $source)` does DELETE WHERE source + INSERT in one transaction and refuses files whose header isn't `datum_zac`. ~70 % of rows are identical in both files, so `matchServiceOrders()` de-duplicates by (scheduled_at, spz, vin) for the dashboard, preferring `objednano`
+- Vehicles: `s3_object_key` → `importVehiclesCsv()` (upsert by SPZ). Orders: the `SERVICE_ORDER_FILES` constant maps each source (`objednano`, `prijem`) to its settings keys (`s3_orders_object_key` / `s3_prijem_object_key`, ETag, last-modified); `importServiceOrdersCsv($db, $path, $source)` does DELETE WHERE source + INSERT in one transaction and refuses files whose header isn't `datum_zac`, that contain the header more than once (SSIS appended instead of overwriting) or whose last line is truncated — the table then keeps its previous data. Optional last column `stredisko` → `center_code`. ~70 % of rows are identical in both files, so `matchServiceOrders()` de-duplicates by (scheduled_at, spz, vin) for the dashboard, preferring `objednano`
 - One cron endpoint `api/sync-vehicles.php` runs both syncs; the whole fetch → import → settings → log flow lives in `syncVehiclesFromS3()` / `syncServiceOrdersFromS3()` (built on `fetchAndImportS3Csv()`), which the admin "Synchronizovat" buttons call with `source='manual'` (forces download, ignores ETag). Cron skips the download when the S3 ETag is unchanged (`s3_last_etag` / `s3_orders_last_etag`); results go to JSON logs via `appendSettingLog()` (`vehicles_sync_log`, `orders_sync_log`, `db_backup_log`)
 - Source CSVs are Windows-1250, `;`-separated, values padded with spaces — always `trim()`
+
+### Branches / pobočky (PRD 3.14)
+- Every request has `branch_id` (NOT NULL). Users are assigned M:N via `tel_user_branches`; `tel_users.default_branch_id` preselects the branch in the new-request form. Admin sees everything
+- Access level per request = `requestAccessLevel($req, $userId, $isAdmin, $branchIds)`: `full` (member of the request's branch or admin), `creator` (author from another branch — may only view, `change_branch`, and `edit_contact` while `new`), `none` (403). **Every endpoint that loads a request by ID must check it** (`accessTo()` in `api/requests.php`, `smsRequestAccess()` in `api/sms.php`)
+- List visibility for non-admins: `branchVisibilityCondition()` = own branches + own unresolved requests on other branches
+- `userBranchIds()` reads the DB on every call (not cached in session) so admin changes apply immediately
+- `change_branch` → `validateBranchChange()` + `applyBranchChange()`: request becomes `new` and unassigned on the target branch, `created_at` kept; reason required if assigned or older than `BRANCH_CHANGE_FREE_MINUTES`. Audit: `branch_changed` (old/new branch IDs) + `field_edit` `branch_change_reason`
+- Planner orders carry `center_code` (DMS středisko); several branches can share one (`tel_branches.dms_center_code`, N:1). `decorateServiceOrders()` adds `center_label` + `other_center` flag. Compare codes as exact strings (`3` ≠ `33`)
 
 ### SMS subsystem
 - `api/sms.php` has two auth modes: session (enqueue + list) and API-key (bridge pull/confirm)
@@ -137,15 +153,17 @@ All CSS/JS links use `assetUrl('assets/css/style.css')` (defined in `includes/fu
 
 | Table | Purpose |
 |---|---|
-| `tel_users` | Accounts (`role`: user/admin, `can_reopen`, `is_active`) |
-| `tel_requests` | Service requests (5 statuses, soft delete via `deleted_at`) |
+| `tel_users` | Accounts (`role`: user/admin, `can_reopen`, `is_active`, `default_branch_id`) |
+| `tel_branches` | Branches (`code`, `name`, `dms_center_code`, `is_active`, `sort_order`) — never deleted, only deactivated. Created by `_local/migrate-branches.sql` |
+| `tel_user_branches` | User ↔ branch assignment (M:N) |
+| `tel_requests` | Service requests (5 statuses, `branch_id`, soft delete via `deleted_at`) |
 | `tel_request_history` | Immutable audit log of all mutations |
 | `tel_settings` | Key-value app configuration |
 | `tel_password_resets` | Time-limited reset tokens (24 h) |
 | `tel_rate_limits` | Login/reset brute-force protection with exponential backoff |
 | `tel_vehicles` | Optional vehicle metadata keyed by normalised SPZ |
 | `tel_sms_queue` | Outbound SMS queue (`pending` / `sent` / `failed`) — created by `migrate-sms.sql` |
-| `tel_service_orders` | Scheduled service appointments from two S3 files with identical structure: `planovac-objednano.csv` (`source='objednano'`) and `planovac-prijem.csv` (`source='prijem'`). `vin` = `fabkod` + `vinkod`; `scheduled_at` UTC; each import replaces only the rows of its own `source`. Created by `_local/migrate-service-orders.sql` + `migrate-service-orders-prijem.sql` |
+| `tel_service_orders` | Scheduled service appointments from two S3 files with identical structure: `planovac-objednano.csv` (`source='objednano'`) and `planovac-prijem.csv` (`source='prijem'`). `vin` = `fabkod` + `vinkod`; `scheduled_at` UTC; `center_code` = DMS středisko (`stredisko` column, v1.8); each import replaces only the rows of its own `source`. Created by `_local/migrate-service-orders.sql` + `migrate-service-orders-prijem.sql` + `migrate-branches.sql` |
 
 ## Typed helper functions (PHPStan level 9)
 

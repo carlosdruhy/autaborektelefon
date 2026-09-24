@@ -32,10 +32,12 @@ const KEYS = {
     FILTER:  'AB_TEL_FILTER',
     SOUND:   'AB_TEL_SOUND',
     THEME:   'AB_TEL_THEME',
+    BRANCH:  'AB_TEL_BRANCH',
 };
 
 let currentSort   = 'asc';
 let currentFilter = 'all';
+let currentBranch = '';   // '' = všechny moje pobočky
 let soundEnabled  = false;
 
 function loadPreferencesFromStorage() {
@@ -51,6 +53,13 @@ function loadPreferencesFromStorage() {
     currentFilter = localStorage.getItem(KEYS.FILTER) || 'all';
     document.querySelectorAll('.filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.filter === currentFilter);
+    });
+
+    // Uložená pobočka platí jen, pokud ji uživatel stále vidí (tlačítko existuje)
+    const savedBranch = localStorage.getItem(KEYS.BRANCH) || '';
+    currentBranch = document.querySelector(`.branch-btn[data-branch="${CSS.escape(savedBranch)}"]`) ? savedBranch : '';
+    document.querySelectorAll('.branch-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.branch === currentBranch);
     });
 
     soundEnabled = localStorage.getItem(KEYS.SOUND) === '1';
@@ -118,6 +127,7 @@ async function loadRequests() {
         status: currentFilter,
     });
     if (search) params.set('search', search);
+    if (currentBranch) params.set('branch', currentBranch);
 
     try {
         const res = await apiGet('/requests.php?' + params.toString());
@@ -206,10 +216,22 @@ function serviceOrdersLabel(req) {
     const orders = Array.isArray(req.service_orders) ? req.service_orders : [];
     if (orders.length === 0) return '';
     return orders
-        .map(o => esc(o.scheduled_at_local)
-            + (o.client_name ? ` (${esc(o.client_name)})` : '')
-            + (o.source === 'prijem' ? ' – příjem' : ''))
+        .map(o => {
+            const text = esc(o.scheduled_at_local)
+                + (o.client_name ? ` (${esc(o.client_name)})` : '')
+                + (o.source === 'prijem' ? ' – příjem' : '')
+                + (o.center_label ? ` · ${esc(o.center_label)}` : '');
+            // Vůz objednaný na jiném středisku, než kam patří pobočka požadavku
+            return o.other_center
+                ? `<span class="order-other-center" title="Objednáno na jiném středisku — patří požadavek jiné pobočce?"><i class="bi bi-exclamation-triangle-fill"></i> ${text}</span>`
+                : text;
+        })
         .join(' · ');
+}
+
+function branchBadge(req) {
+    if (!req.branch_code) return '';
+    return `<span class="badge-branch" title="${esc(req.branch_name || '')}">${esc(req.branch_code)}</span>`;
 }
 
 function createRequestCard(req) {
@@ -231,7 +253,15 @@ function createRequestCard(req) {
 
     const ordersLabel = serviceOrdersLabel(req);
 
+    const isForeign = req.access === 'creator';
+
     let badges = '';
+    if (isForeign) {
+        badges += `<span class="badge-moved ms-1" title="Požadavek jste zadali pro jinou pobočku — můžete ho sledovat a přeřadit"><i class="bi bi-send-check"></i> zadal(a) jsem</span>`;
+    }
+    if (req.moved_from_code) {
+        badges += `<span class="badge-moved ms-1" title="Přeřazeno z pobočky ${esc(req.moved_from_code)}">↪ z ${esc(req.moved_from_code)}</span>`;
+    }
     if (req.deleted_at) {
         badges += `<span class="badge-deleted ms-1"><i class="bi bi-trash3-fill"></i> Smazáno ${esc(req.deleted_at_local || '')}</span>`;
     }
@@ -262,10 +292,11 @@ function createRequestCard(req) {
     }
 
     return `
-<div class="req-card level-${level}${isNew ? ' req-card-new' : ''}" data-id="${req.id}">
+<div class="req-card level-${level}${isNew ? ' req-card-new' : ''}${isForeign ? ' req-card-foreign' : ''}" data-id="${req.id}">
     <div class="card-grid">
         <div class="d-flex align-items-center gap-2 flex-wrap">
             <span class="level-icon">${levelIcon}</span>
+            ${APP.showBranch || isForeign ? branchBadge(req) : ''}
             <span class="badge-spz">${esc(req.spz)}</span>
             <strong>${esc(req.client_name)}</strong>
             ${req.client_phone ? `<span class="text-muted">${esc(req.client_phone)}</span>` : ''}
@@ -460,6 +491,7 @@ function initKeyboardShortcuts() {
         switch (e.key) {
             case 'n':
             case 'N':
+                if (!APP.currentUser.canCreate) return;
                 e.preventDefault();
                 bootstrap.Modal.getOrCreateInstance(
                     document.getElementById('newRequestModal')
@@ -514,8 +546,6 @@ async function openRequestModal(requestId) {
 }
 
 function renderModal(req) {
-    const isAdmin    = APP.currentUser.isAdmin;
-    const isAssigned = req.assigned_to_id === APP.currentUser.id;
     const statusLabels = {
         new: 'Nový', in_progress: 'Převzatý', pending: 'Čeká',
         resolved: 'Vyřízen', reopened: 'Znovuotevřen',
@@ -541,6 +571,11 @@ function renderModal(req) {
         : '';
 
     document.getElementById('modalBody').innerHTML = `
+${req.access === 'creator' ? `
+<div class="alert alert-secondary small py-2">
+    <i class="bi bi-info-circle"></i> Požadavek řeší pobočka ${esc(req.branch_name || '')}. Jako zadavatel ho můžete sledovat
+    a přeřadit${req.status === 'new' ? ' nebo opravit údaje' : ''}.
+</div>` : ''}
 <div class="row g-3 mb-3">
     <div class="col-sm-6" id="contactSection">
         <table class="table table-sm table-borderless mb-0">
@@ -556,7 +591,10 @@ function renderModal(req) {
     </div>
     <div class="col-sm-6">
         <table class="table table-sm table-borderless mb-0">
-            <tr><th class="text-muted fw-normal ps-0" style="width:45%">Stav</th>
+            <tr><th class="text-muted fw-normal ps-0" style="width:45%">Pobočka</th>
+                <td>${branchBadge(req)} ${esc(req.branch_name || '')}
+                    ${req.moved_from_code ? `<span class="badge-moved">↪ z ${esc(req.moved_from_code)}</span>` : ''}</td></tr>
+            <tr><th class="text-muted fw-normal ps-0">Stav</th>
                 <td>${statusLabels[req.status] || req.status}</td></tr>
             <tr><th class="text-muted fw-normal ps-0">${req.status === 'resolved' && req.resolution_minutes != null ? 'Vyřízeno za' : 'Stáří'}</th>
                 <td>${req.status === 'resolved' && req.resolution_minutes != null ? formatAge(req.resolution_minutes) : formatAge(req.age_minutes)}</td></tr>
@@ -619,7 +657,7 @@ ${req.history && req.history.length ? `
                     <div class="history-entry mb-2">
                         <div><strong>${esc(h.user_name)}</strong>
                             <span class="text-muted">${esc(h.created_at_local || h.created_at)}</span></div>
-                        <div class="text-muted">${esc(h.action)}${h.field_name ? ' › ' + esc(h.field_name) : ''}</div>
+                        <div class="text-muted">${historyLabel(h)}</div>
                         ${h.old_value ? `<div><del class="text-danger small">${esc(h.old_value)}</del></div>` : ''}
                         ${h.new_value ? `<div><ins class="text-success small" style="text-decoration:none">${esc(h.new_value)}</ins></div>` : ''}
                     </div>`).join('')}
@@ -630,6 +668,22 @@ ${req.history && req.history.length ? `
 `;
 
     renderModalActions(req, draft);
+}
+
+// Srozumitelný popis záznamu historie pro přeřazení a opravy údajů; ostatní akce beze změny
+const HISTORY_LABELS = {
+    'branch_changed|branch_id':        'Přeřazeno na jinou pobočku',
+    'field_edit|branch_change_reason': 'Důvod přeřazení',
+    'field_edit|spz':                  'Opravena SPZ',
+    'field_edit|client_name':          'Opraveno jméno',
+    'field_edit|client_phone':         'Opraven telefon',
+    'field_edit|client_email':         'Opraven e-mail',
+};
+
+function historyLabel(h) {
+    const key = `${h.action}|${h.field_name || ''}`;
+    if (HISTORY_LABELS[key]) return esc(HISTORY_LABELS[key]);
+    return esc(h.action) + (h.field_name ? ' › ' + esc(h.field_name) : '');
 }
 
 function renderModalActions(req, draft) {
@@ -658,6 +712,19 @@ function renderModalActions(req, draft) {
                 if (!confirm('Obnovit tento požadavek?')) return;
                 submitAction('restore', {});
             });
+        }
+        return;
+    }
+
+    const canMove = BRANCH_CHANGE_STATUSES.includes(req.status) && APP.branches.length > 1;
+
+    // Zadavatel z jiné pobočky: jen přeřadit a (dokud je nový) opravit údaje (PRD 3.14.2)
+    if (req.access === 'creator') {
+        if (req.status === 'new') {
+            addBtn('Opravit údaje', 'btn-outline-secondary', () => openContactEdit(req));
+        }
+        if (canMove) {
+            addBtn('Přeřadit na jinou pobočku', 'btn-outline-primary', () => openChangeBranch(req));
         }
         return;
     }
@@ -740,9 +807,13 @@ function renderModalActions(req, draft) {
         addBtn('Odeslat SMS', 'btn-outline-info', () => openSmsModal(req));
     }
 
-    // Upravit kontakt (všichni, pokud není vyřízeno)
+    // Opravit údaje — SPZ a kontakt (všichni z pobočky, pokud není vyřízeno)
     if (req.status !== 'resolved') {
-        addBtn('Upravit kontakt', 'btn-outline-secondary', () => openContactEdit(req));
+        addBtn('Opravit údaje', 'btn-outline-secondary', () => openContactEdit(req));
+    }
+
+    if (canMove) {
+        addBtn('Přeřadit na jinou pobočku', 'btn-outline-primary', () => openChangeBranch(req));
     }
 
     // Soft-delete (jen admin)
@@ -758,12 +829,119 @@ function renderModalActions(req, draft) {
    G. Akce z modálu
 ═══════════════════════════════════════════════════════════════ */
 
+/* Stavy, ze kterých lze přeřadit (shodně s BRANCH_CHANGE_STATUSES v PHP) */
+const BRANCH_CHANGE_STATUSES = ['new', 'in_progress', 'pending', 'reopened'];
+const BRANCH_CHANGE_FREE_MINUTES = 10;
+
+function openChangeBranch(req) {
+    const area = document.getElementById('actionArea');
+    if (!area) return;
+
+    const targets = APP.branches.filter(b => b.id !== Number(req.branch_id));
+    // Důvod povinný, když je převzato nebo je požadavek starší než 10 min (server kontroluje totéž)
+    const reasonRequired = !!req.assigned_to_id || req.age_minutes >= BRANCH_CHANGE_FREE_MINUTES;
+
+    area.innerHTML = `
+<div class="p-3 border rounded mb-3">
+    <div class="fw-semibold mb-2"><i class="bi bi-arrow-left-right"></i> Přeřadit na jinou pobočku</div>
+    <div class="mb-2">
+        <label class="form-label form-label-sm mb-1" for="changeBranchTarget">Cílová pobočka</label>
+        <select id="changeBranchTarget" class="form-select form-select-sm">
+            ${targets.map(b => `<option value="${b.id}">${esc(b.code)} – ${esc(b.name)}</option>`).join('')}
+        </select>
+    </div>
+    <div class="mb-2">
+        <label class="form-label form-label-sm mb-1" for="changeBranchReason">
+            Důvod ${reasonRequired ? '<span class="text-danger">*</span>' : '(volitelný)'}
+        </label>
+        <input type="text" id="changeBranchReason" class="form-control form-control-sm" maxlength="500"
+               placeholder="Např. klient přijede do Tábora">
+    </div>
+    <div class="form-text">
+        Na cílové pobočce se požadavek objeví jako nový, nepřevzatý${req.assigned_to_name ? ` — ${esc(req.assigned_to_name)} ho přestane řešit` : ''}.
+        Stáří požadavku zůstává.
+    </div>
+</div>`;
+
+    const footer = document.getElementById('modalFooter');
+    footer.innerHTML = '';
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-secondary';
+    cancelBtn.textContent = 'Zrušit';
+    cancelBtn.onclick = () => openRequestModal(currentRequestId);
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn btn-primary';
+    saveBtn.textContent = 'Přeřadit';
+    saveBtn.onclick = async () => {
+        const branchId = parseInt(document.getElementById('changeBranchTarget').value, 10);
+        const reason   = document.getElementById('changeBranchReason').value.trim();
+        if (reasonRequired && !reason) { alert('Uveďte důvod přeřazení.'); return; }
+
+        saveBtn.disabled = true;
+        try {
+            const result = await apiPost('/requests.php?action=update', {
+                id: currentRequestId,
+                expected_updated_at: expectedUpdatedAt,
+                action_type: 'change_branch',
+                branch_id: branchId,
+                reason,
+            });
+            if (result.status === 409) {
+                const warn = document.getElementById('conflictWarning');
+                if (warn) {
+                    warn.textContent = result.error || 'Konflikt – někdo jiný mezitím upravil tento požadavek.';
+                    warn.classList.remove('d-none');
+                }
+                saveBtn.disabled = false;
+                return;
+            }
+            if (!result.success) {
+                alert(result.error || 'Chyba při ukládání.');
+                saveBtn.disabled = false;
+                return;
+            }
+            const d = result.data;
+            showToast(`Požadavek přeřazen na ${d.branch_code} – ${d.branch_name}.`
+                + (d.still_visible ? '' : ' Z vašeho přehledu zmizel.'));
+            clearDraft(currentRequestId);
+            bsModal?.hide();
+            await loadRequests();
+        } catch (e) {
+            alert('Chyba připojení k serveru.');
+            saveBtn.disabled = false;
+        }
+    };
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(saveBtn);
+    document.getElementById('changeBranchReason')?.focus();
+}
+
+let toastTimer = null;
+
+function showToast(msg) {
+    const el = document.getElementById('pageToast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.remove('d-none');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.add('d-none'), 6000);
+}
+
 function openContactEdit(req) {
     const section = document.getElementById('contactSection');
     if (!section) return;
 
     section.innerHTML = `
 <div class="p-2 border rounded">
+    <div class="mb-2">
+        <label class="form-label form-label-sm fw-semibold mb-1">SPZ <span class="text-danger">*</span></label>
+        <input type="text" id="editContactSpz" class="form-control form-control-sm text-uppercase" maxlength="20" value="${esc(req.spz || '')}">
+    </div>
     <div class="mb-2">
         <label class="form-label form-label-sm fw-semibold mb-1">Jméno <span class="text-danger">*</span></label>
         <input type="text" id="editContactName" class="form-control form-control-sm" value="${esc(req.client_name || '')}">
@@ -792,9 +970,11 @@ function openContactEdit(req) {
     saveBtn.className = 'btn btn-primary';
     saveBtn.textContent = 'Uložit';
     saveBtn.onclick = async () => {
+        const spz   = document.getElementById('editContactSpz').value.toUpperCase().replace(/[\s\-]/g, '');
         const name  = document.getElementById('editContactName').value.trim();
         const phone = document.getElementById('editContactPhone').value.trim();
         const email = document.getElementById('editContactEmail').value.trim();
+        if (!spz)  { alert('SPZ nesmí být prázdná.'); return; }
         if (!name) { alert('Jméno nesmí být prázdné.'); return; }
         saveBtn.disabled = true;
         saveBtn.textContent = 'Ukládám…';
@@ -803,6 +983,7 @@ function openContactEdit(req) {
                 id: currentRequestId,
                 expected_updated_at: expectedUpdatedAt,
                 action_type: 'edit_contact',
+                spz,
                 client_name: name,
                 client_phone: phone,
                 client_email: email,
@@ -813,7 +994,9 @@ function openContactEdit(req) {
                 saveBtn.textContent = 'Uložit';
                 return;
             }
+            // Detail i karta znovu — po změně SPZ se dohledá vozidlo a termín v plánovači
             openRequestModal(currentRequestId);
+            loadRequests();
         } catch (e) {
             alert('Chyba připojení k serveru.');
             saveBtn.disabled = false;
@@ -877,9 +1060,30 @@ function initNewRequestForm() {
         vehicleHint.innerHTML = '';
     }
 
+    // Pobočka: předvyplnit domovskou, jinou volbu zvýraznit (PRD 3.14.3)
+    const branchRadios = [...form.querySelectorAll('[name="branch_id"]')];
+    const branchGroup  = form.querySelector('.branch-picker-group');
+    const branchHint   = document.getElementById('branchOtherHint');
+    const branchName   = document.getElementById('branchPickedName');
+    function updateBranchHighlight() {
+        const checked = branchRadios.find(r => r.checked);
+        const other = !!checked && APP.currentUser.defaultBranchId > 0
+            && Number(checked.value) !== APP.currentUser.defaultBranchId;
+        branchGroup?.classList.toggle('branch-picked-other', other);
+        branchHint?.classList.toggle('d-none', !other);
+        if (branchName) {
+            branchName.textContent = checked ? checked.dataset.name : '';
+            branchName.classList.toggle('is-other', other);
+        }
+    }
+    branchRadios.forEach(r => r.addEventListener('change', updateBranchHighlight));
+
     // Vyčistit formulář při otevření modálu
     modalEl.addEventListener('show.bs.modal', () => {
         form.reset();
+        const def = branchRadios.find(r => Number(r.value) === APP.currentUser.defaultBranchId);
+        if (def) def.checked = true;
+        updateBranchHighlight();
         document.getElementById('charCount').textContent = '0';
         alertEl.classList.add('d-none');
         clearVehicleHint();
@@ -933,6 +1137,7 @@ function initNewRequestForm() {
 
         const data = Object.fromEntries(new FormData(form));
         data.spz = (data.spz || '').toUpperCase().replace(/[\s\-]/g, '');
+        data.branch_id = parseInt(data.branch_id, 10) || 0;
 
         try {
             const result = await apiPost('/requests.php?action=create', data);
@@ -1070,6 +1275,17 @@ function initFilterSort() {
             btn.classList.add('active');
             currentFilter = btn.dataset.filter;
             savePreference(KEYS.FILTER, currentFilter);
+            currentPage = 1;
+            loadRequests();
+        });
+    });
+
+    document.querySelectorAll('.branch-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.branch-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentBranch = btn.dataset.branch;
+            savePreference(KEYS.BRANCH, currentBranch);
             currentPage = 1;
             loadRequests();
         });

@@ -168,7 +168,7 @@ final class ServiceOrdersImportTest extends DatabaseTestCase
         $result = importServiceOrdersCsv($this->db, $sample);
 
         $this->assertSame([], $result['errors']);
-        $this->assertSame(289, $result['imported']);
+        $this->assertSame($this->dataLineCount($sample), $result['imported']);
         $this->assertSame(0, $result['skipped']);
 
         $stmt = $this->db->query('SELECT COUNT(*) FROM tel_service_orders WHERE vin IS NULL');
@@ -299,7 +299,106 @@ final class ServiceOrdersImportTest extends DatabaseTestCase
         $result = importServiceOrdersCsv($this->db, $sample, 'prijem');
 
         $this->assertSame([], $result['errors']);
-        $this->assertSame(293, $result['imported']);
+        $this->assertSame($this->dataLineCount($sample), $result['imported']);
         $this->assertSame(0, $result['skipped']);
+
+        // Nový export obsahuje středisko (3 = Borek, 33 = Tábor)
+        $stmt = $this->db->query('SELECT DISTINCT center_code FROM tel_service_orders ORDER BY center_code');
+        $this->assertNotFalse($stmt);
+        $this->assertSame(['3', '33'], $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    /** Počet datových řádků vzorového souboru (bez hlavičky a prázdných řádků). */
+    private function dataLineCount(string $path): int
+    {
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        $this->assertNotFalse($lines);
+        return count($lines) - 1;
+    }
+
+    // ─── Středisko a pojistky proti vadnému exportu (PRD 1.8) ─────────────────
+
+    private const HEADER6 = "\"datum_zac\";\"spz\";\"fabkod\";\"vinkod\";\"klient\";\"stredisko\"\r\n";
+
+    public function testCenterCodeIsImported(): void
+    {
+        $csv = self::HEADER6
+             . "\"2026-09-24 11:00:00\";\"9C4 74-77 \";\"VF1\";\"HJD20769751006\";\"Prokeš Martin   \";\"33\"\r\n"
+             . "\"2026-09-24 11:30:00\";\"1CC 06-33 \";\"VNV\";\"M1000372744571\";\"GOFER\";\" 3 \"\r\n";
+        $result = importServiceOrdersCsv($this->db, $this->writeCsv($csv, true), 'prijem');
+
+        $this->assertSame([], $result['errors']);
+        $this->assertSame(['33', '3'], array_column($this->allOrders(), 'center_code'));
+    }
+
+    public function testUnquotedFileWithCenterIsImported(): void
+    {
+        $csv = "datum_zac;spz;fabkod;vinkod;klient;stredisko\r\n"
+             . "2026-09-24 10:00:00;1CE 26-92 ;SJN;TANJ12U2139959;GW BUS a.s.;3\r\n";
+        $result = importServiceOrdersCsv($this->db, $this->writeCsv($csv));
+
+        $this->assertSame([], $result['errors']);
+        $this->assertSame('3', $this->allOrders()[0]['center_code']);
+    }
+
+    public function testOldFormatWithoutCenterStillWorks(): void
+    {
+        $csv = self::HEADER
+             . "\"2026-09-18 09:30:00\";\"1CE 05-23\";\"VF1\";\"RFK00574387664\";\"A\"\r\n";
+        $result = importServiceOrdersCsv($this->db, $this->writeCsv($csv));
+
+        $this->assertSame([], $result['errors']);
+        $this->assertNull($this->allOrders()[0]['center_code']);
+    }
+
+    public function testRepeatedHeaderRejectsFileAndKeepsData(): void
+    {
+        $good = self::HEADER6
+              . "\"2026-09-18 09:30:00\";\"1CE 05-23\";\"VF1\";\"RFK00574387664\";\"A\";\"3\"\r\n";
+        importServiceOrdersCsv($this->db, $this->writeCsv($good));
+
+        // Export připsaný dvakrát za sebou (SSIS bez přepisu souboru)
+        $row      = "\"2026-09-19 10:00:00\";\"9C9 65-39\";\"VF1\";\"HJD40871440732\";\"B\";\"33\"\r\n";
+        $appended = self::HEADER6 . $row . self::HEADER6 . $row;
+        $result   = importServiceOrdersCsv($this->db, $this->writeCsv($appended));
+
+        $this->assertCount(1, $result['errors']);
+        $this->assertStringContainsString('hlavičku 2×', $result['errors'][0]);
+        $this->assertSame(0, $result['imported']);
+        $this->assertSame(['1CE0523'], array_column($this->allOrders(), 'spz_normalized'), 'Předchozí data zůstávají');
+    }
+
+    public function testTruncatedLastLineRejectsFileAndKeepsData(): void
+    {
+        $good = self::HEADER6
+              . "\"2026-09-18 09:30:00\";\"1CE 05-23\";\"VF1\";\"RFK00574387664\";\"A\";\"3\"\r\n";
+        importServiceOrdersCsv($this->db, $this->writeCsv($good));
+
+        // Soubor nahraný během zápisu — poslední řádek useknutý uprostřed
+        $truncated = self::HEADER6
+                   . "\"2026-09-19 10:00:00\";\"9C9 65-39\";\"VF1\";\"HJD40871440732\";\"B\";\"33\"\r\n"
+                   . "\"2026-09-24 13:00:00\";\"7C8 71-39 \";\"UU1\";\"5SDM3557867506\";\"R";
+        $result = importServiceOrdersCsv($this->db, $this->writeCsv($truncated));
+
+        $this->assertCount(1, $result['errors']);
+        $this->assertStringContainsString('neúplný', $result['errors'][0]);
+        $this->assertSame(['1CE0523'], array_column($this->allOrders(), 'spz_normalized'), 'Předchozí data zůstávají');
+    }
+
+    public function testDecorateServiceOrdersFlagsOtherCenter(): void
+    {
+        $labels = ['3' => 'Borek', '33' => 'Tábor – servis'];
+        $orders = [
+            ['scheduled_at_local' => '25.09.2026 08:00', 'client_name' => 'A', 'source' => 'objednano', 'center_code' => '33'],
+            ['scheduled_at_local' => '26.09.2026 08:00', 'client_name' => 'B', 'source' => 'objednano', 'center_code' => '3'],
+            ['scheduled_at_local' => '27.09.2026 08:00', 'client_name' => 'C', 'source' => 'prijem',    'center_code' => ''],
+        ];
+
+        $out = decorateServiceOrders($orders, '3', $labels);
+
+        $this->assertSame(['Tábor – servis', 'Borek', ''], array_column($out, 'center_label'));
+        $this->assertSame([true, false, false], array_column($out, 'other_center'));
+        // Pobočka bez střediska — nic se neoznačuje
+        $this->assertSame([false, false, false], array_column(decorateServiceOrders($orders, '', $labels), 'other_center'));
     }
 }
