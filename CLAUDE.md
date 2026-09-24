@@ -187,4 +187,10 @@ Never use `@var`, `assert()`, type casts on `mixed`, or `@phpstan-ignore`.
 - `migrate-sms.sql` must be run once in phpMyAdmin to add the SMS table and default settings
 - `sms-bridge.ps1` lives on the local Windows PC at the firm, not on the server
 - `logs/` and `includes/` directories are blocked by `.htaccess` and `admin/.htaccess`
-- `includes/config.php` is in `.gitignore` (contains DB credentials) — never commit it; maintain separately on server
+- `includes/config.php` is in `.gitignore` (contains DB credentials) — never commit it; maintain separately on server. The local copy is identical to production (points to `db.db017.webglobe.com`), so it can be re-uploaded if lost
+- Production: PHP 8.4, document root `/home/html/auto-borek.cz/_sub/tel/`. Errors are not displayed and `logs/app.log` only receives app-level log lines, so a PHP fatal shows up as a bare HTTP 500
+- **HTTP 500 on every page after an upload → first check that `includes/config.php` still exists on the server.** During the 1.7/1.8 rollout (2026-09-24) uploading the `includes/` folder removed it. Upload individual files, not whole folders
+- To diagnose a 500, upload a temporary randomly-named `diag-<random>.php` to the web root that sets `display_errors=1`, `require`s the includes one by one and reports the failing step; delete it right after
+- Migrations in `_local/*.sql` are run by hand in phpMyAdmin in dependency order: `migrate-vehicles` → `migrate-vehicles-sync` → `migrate-db-backup` → `migrate-service-orders` → `migrate-service-orders-prijem` → `migrate-branches`. `INSERT IGNORE` / `CREATE TABLE IF NOT EXISTS` files are safe to re-run (phpMyAdmin shows harmless `#1062` duplicate-key warnings); `ALTER … ADD COLUMN` files fail with `Duplicate column name` when already applied — that means skip, not error
+- Schema migrations that add a NOT NULL column used by INSERTs (e.g. `migrate-branches.sql` → `tel_requests.branch_id`) break the old code: run such a migration and the FTP upload back-to-back at a quiet time
+- As of 2026-09-24 all migrations up to and including `migrate-branches.sql` have been applied on production; the S3 order paths and cron were already configured
